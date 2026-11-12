@@ -152,6 +152,9 @@ func productionPluginRouteHandlers(generation *jsplugin.RoutingGeneration, group
 		middleware.SystemPerformanceCheck(),
 		middleware.ModelRequestRateLimit(),
 		middleware.PrepareTaskPluginRoute(),
+		// Preparation renders and aborts query intents, including dynamic POST
+		// queries. Only decoded submissions reach concurrency admission.
+		middleware.UserConcurrencyLimit(),
 		middleware.Distribute(),
 		controller.RelayTask,
 	}

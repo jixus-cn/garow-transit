@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -9,36 +10,41 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 )
 
-const userCacheSchemaVersion = 2
+const userCacheSchemaVersion = 5
 
 type UserBase struct {
-	Id             int    `json:"id"`
-	Group          string `json:"group"`
-	Email          string `json:"email"`
-	Quota          int    `json:"quota"`
-	Status         int    `json:"status"`
-	Role           int    `json:"role"`
-	Username       string `json:"username"`
-	Setting        string `json:"setting"`
-	AuthVersion    int64  `json:"-"`
-	CacheSchema    int    `json:"-"`
-	CacheExpiresAt int64  `json:"-"`
-	CacheMAC       string `json:"-"`
+	Id                 int    `json:"id"`
+	Group              string `json:"group"`
+	Email              string `json:"email"`
+	Quota              int    `json:"quota"`
+	Status             int    `json:"status"`
+	Role               int    `json:"role"`
+	Username           string `json:"username"`
+	Setting            string `json:"setting"`
+	AuthVersion        int64  `json:"-"`
+	CacheSchema        int    `json:"-"`
+	CacheExpiresAt     int64  `json:"-"`
+	MaxConcurrency     int    `json:"max_concurrency"`
+	ConcurrencyVersion int64  `json:"-"`
+	CacheMAC           string `json:"-"`
 }
 
 func (user UserBase) cacheMAC() (string, error) {
 	user.Quota = 0
 	return authCacheMAC(getUserCacheKey(user.Id), struct {
-		User           UserBase
-		AuthVersion    int64
-		CacheSchema    int
-		CacheExpiresAt int64
-	}{user, user.AuthVersion, user.CacheSchema, user.CacheExpiresAt})
+		User               UserBase
+		AuthVersion        int64
+		CacheSchema        int
+		CacheExpiresAt     int64
+		ConcurrencyVersion int64
+	}{user, user.AuthVersion, user.CacheSchema, user.CacheExpiresAt, user.ConcurrencyVersion})
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
+	common.SetContextKey(c, constant.ContextKeyUserMaxConcurrency, user.MaxConcurrency)
 	common.SetContextKey(c, constant.ContextKeyUserGroup, user.Group)
 	common.SetContextKey(c, constant.ContextKeyUserQuota, user.Quota)
 	common.SetContextKey(c, constant.ContextKeyUserStatus, user.Status)
@@ -117,7 +123,7 @@ func GetUserCache(userId int) (*UserBase, error) {
 			return nil, ErrUserAuthCachePending
 		}
 		if err := populateUserCache(*user); err != nil {
-			if errors.Is(err, ErrUserAuthCachePending) {
+			if errors.Is(err, ErrUserAuthCachePending) || errors.Is(err, ErrUserConcurrencyCachePending) {
 				return nil, err
 			}
 			common.SysLog(common.LogText("failed to synchronously populate user cache: %s", err.Error()))
@@ -136,7 +142,7 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	if err != nil {
 		return nil, err
 	}
-	if userCache.Id != userId || userCache.CacheSchema != userCacheSchemaVersion || userCache.AuthVersion <= 0 {
+	if userCache.Id != userId || userCache.CacheSchema != userCacheSchemaVersion || userCache.AuthVersion <= 0 || userCache.ConcurrencyVersion <= 0 {
 		return nil, fmt.Errorf("user cache schema is stale")
 	}
 	mac, err := userCache.cacheMAC()
@@ -149,6 +155,13 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	}
 	if floor > userCache.AuthVersion {
 		return nil, ErrUserAuthCachePending
+	}
+	concurrencyFloor, err := common.RDB.Get(context.Background(), getUserConcurrencyVersionKey(userId)).Int64()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	if concurrencyFloor > userCache.ConcurrencyVersion {
+		return nil, ErrUserConcurrencyCachePending
 	}
 	return &userCache, nil
 }
