@@ -40,7 +40,7 @@ func TestConversationStorageMatrix(t *testing.T) {
 				if os.Getenv("TEST_POSTGRES_DSN") == "" {
 					t.Skip("TEST_POSTGRES_DSN is not configured")
 				}
-				driver = postgres.Open(os.Getenv("TEST_POSTGRES_DSN"))
+				driver = postgres.New(postgres.Config{DSN: os.Getenv("TEST_POSTGRES_DSN"), PreferSimpleProtocol: true})
 			}
 			db, err := gorm.Open(driver, &gorm.Config{})
 			require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestConversationStorageMatrix(t *testing.T) {
 				separateDriver = mysql.Open(os.Getenv("TEST_LOG_MYSQL_DSN"))
 			} else if dialect == "postgres" {
 				require.NotEmpty(t, os.Getenv("TEST_LOG_POSTGRES_DSN"))
-				separateDriver = postgres.Open(os.Getenv("TEST_LOG_POSTGRES_DSN"))
+				separateDriver = postgres.New(postgres.Config{DSN: os.Getenv("TEST_LOG_POSTGRES_DSN"), PreferSimpleProtocol: true})
 			}
 			logDB, err := gorm.Open(separateDriver, &gorm.Config{})
 			require.NoError(t, err)
@@ -81,10 +81,17 @@ func TestConversationStorageMatrix(t *testing.T) {
 				t.Run(fmt.Sprintf("upgrade=%t", upgrade), func(t *testing.T) {
 					require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
 					if upgrade {
+						require.NoError(t, db.AutoMigrate(&releasedConversationLog{}))
+						require.NoError(t, db.Create(&releasedConversationLog{RequestId: "legacy-record", UserId: 99, CreatedAt: 10, Payload: []byte("legacy-compressed-content")}).Error)
 						require.NoError(t, logDB.Create(&model.AuditLog{EventId: "existing-audit", CreatedAt: 10, Category: model.AuditCategoryLogin, ActorRole: 1, Content: "existing"}).Error)
 					}
 					for range 2 {
 						require.NoError(t, db.AutoMigrate(&model.ConversationLog{}))
+					}
+					if upgrade {
+						var legacy model.ConversationLog
+						require.NoError(t, db.Where("request_id = ?", "legacy-record").First(&legacy).Error)
+						assert.Equal(t, []byte("legacy-compressed-content"), legacy.Payload)
 					}
 					row := model.ConversationLog{RequestId: "request-1", CreatedAt: time.Now().Unix(), UserId: 1, Model: "test-model", Outcome: "completed"}
 					body := model.ConversationContent{Request: strings.Repeat("测试完整请求", 20000), Response: "reply", LatestInput: "hello", Output: "reply"}
@@ -126,12 +133,79 @@ func TestConversationStorageMatrix(t *testing.T) {
 					if upgrade {
 						assert.EqualValues(t, 1, count)
 					}
+					testConversationThreadLinks(t, db)
 					require.NoError(t, db.Migrator().DropTable(&model.ConversationLog{}))
 					require.NoError(t, logDB.Migrator().DropTable(&model.AuditLog{}))
 				})
 			}
 		})
 	}
+}
+
+type releasedConversationLog struct {
+	Id            int
+	RequestId     string `gorm:"type:varchar(64);uniqueIndex"`
+	UserId        int    `gorm:"index"`
+	CreatedAt     int64  `gorm:"index"`
+	Model         string `gorm:"type:varchar(255)"`
+	ResponseModel string `gorm:"type:varchar(255)"`
+	TokenId       int
+	TokenName     string `gorm:"type:varchar(255)"`
+	Protocol      string `gorm:"type:varchar(32)"`
+	Outcome       string `gorm:"type:varchar(32)"`
+	Truncated     bool
+	Payload       []byte `gorm:"size:16777216"`
+}
+
+func (releasedConversationLog) TableName() string { return "conversation_logs" }
+
+func testConversationThreadLinks(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	for _, fixture := range []struct {
+		id, response, previous string
+		user                   int
+	}{
+		{"root", "resp-root", "", 1}, {"branch-a", "resp-a", "resp-root", 1},
+		{"branch-b", "resp-b", "resp-root", 1}, {"tool-turn", "resp-tool", "resp-a", 1},
+		{"another-user", "resp-other", "resp-root", 2},
+	} {
+		row := model.ConversationLog{RequestId: fixture.id, CreatedAt: time.Now().Unix(), UserId: fixture.user, Kind: "responses"}
+		content := model.ConversationContent{Request: fmt.Sprintf(`{"input":"question","previous_response_id":%q}`, fixture.previous), Response: fmt.Sprintf(`{"id":%q,"output":[{"role":"assistant","content":[{"type":"output_text","text":"reply"}]}]}`, fixture.response)}
+		require.NoError(t, model.StoreConversation(&row, content, model.AuditLog{EventId: fixture.id, UserId: fixture.user, Username: "fixture", ActorRole: 1, Category: model.AuditCategoryConversation}))
+	}
+	require.NoError(t, db.Model(&model.ConversationLog{}).Where("request_id = ?", "branch-a").Updates(map[string]any{"kind": "", "response_id": "", "previous_response_id": ""}).Error)
+	require.NoError(t, model.BackfillConversationLinks())
+	thread, err := model.GetConversationThread("branch-a", 0)
+	require.NoError(t, err)
+	require.Len(t, thread.Turns, 4)
+	parents := map[string]string{}
+	for _, turn := range thread.Turns {
+		parents[turn.Record.RequestId] = turn.ParentRequestId
+		assert.Equal(t, 1, turn.Record.UserId)
+		require.NotNil(t, turn.Content)
+	}
+	assert.Equal(t, "root", parents["branch-a"])
+	assert.Equal(t, "root", parents["branch-b"])
+	assert.Equal(t, "branch-a", parents["tool-turn"])
+	assert.False(t, thread.MissingPrevious)
+	require.NoError(t, db.Model(&model.ConversationLog{}).Where("request_id = ?", "root").Update("created_at", 1).Error)
+	thread, err = model.GetConversationThread("branch-a", time.Now().Unix()-60)
+	require.NoError(t, err)
+	assert.True(t, thread.MissingPrevious)
+	assert.Len(t, thread.Turns, 2)
+	for index := range 52 {
+		previous := ""
+		if index > 0 {
+			previous = fmt.Sprintf("limit-response-%d", index-1)
+		}
+		row := model.ConversationLog{RequestId: fmt.Sprintf("limit-request-%d", index), UserId: 3, Kind: "responses", CreatedAt: time.Now().Unix()}
+		content := model.ConversationContent{Request: fmt.Sprintf(`{"input":"fixture","previous_response_id":%q}`, previous), Response: fmt.Sprintf(`{"id":"limit-response-%d","output":[]}`, index)}
+		require.NoError(t, model.StoreConversation(&row, content, model.AuditLog{EventId: row.RequestId, Username: "fixture", ActorRole: 1, Category: model.AuditCategoryConversation}))
+	}
+	thread, err = model.GetConversationThread("limit-request-51", 0)
+	require.NoError(t, err)
+	assert.True(t, thread.Truncated)
+	assert.Len(t, thread.Turns, 50)
 }
 
 func TestConversationCaptureAndAccess(t *testing.T) {
@@ -242,25 +316,31 @@ func TestConversationCaptureAndAccess(t *testing.T) {
 		{"root", 100, true, "json", 200}, {"user", 1, true, "json", 403}, {"admin", 10, true, "json", 403}, {"root-token", 100, false, "json", 403}, {"expired", 100, true, "missing", 404},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			engine := gin.New()
-			engine.GET("/conversation/:request_id", func(c *gin.Context) {
-				c.Set("id", 1)
-				c.Set("role", tc.role)
-				if tc.session {
-					c.Set("session_id", "fixture-session")
-					c.Set("auth_version", int64(1))
-					c.Set("session_version", int64(1))
+			for _, thread := range []bool{false, true} {
+				engine := gin.New()
+				engine.GET("/conversation/:request_id", func(c *gin.Context) {
+					c.Set("id", 1)
+					c.Set("role", tc.role)
+					if tc.session {
+						c.Set("session_id", "fixture-session")
+						c.Set("auth_version", int64(1))
+						c.Set("session_version", int64(1))
+					}
+					if thread {
+						GetConversationThread(c)
+					} else {
+						GetConversation(c)
+					}
+				})
+				response := httptest.NewRecorder()
+				engine.ServeHTTP(response, httptest.NewRequest("GET", "/conversation/"+tc.id, nil))
+				assert.Equal(t, tc.status, response.Code)
+				if tc.status == http.StatusOK {
+					assert.Contains(t, response.Body.String(), "question")
+					assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+				} else {
+					assert.NotContains(t, response.Body.String(), "question")
 				}
-				GetConversation(c)
-			})
-			response := httptest.NewRecorder()
-			engine.ServeHTTP(response, httptest.NewRequest("GET", "/conversation/"+tc.id, nil))
-			assert.Equal(t, tc.status, response.Code)
-			if tc.status == http.StatusOK {
-				assert.Contains(t, response.Body.String(), "question")
-				assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
-			} else {
-				assert.NotContains(t, response.Body.String(), "question")
 			}
 		})
 	}

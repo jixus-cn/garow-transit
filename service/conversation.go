@@ -34,6 +34,9 @@ func ConversationLoggingEnabled() bool { return os.Getenv("CONVERSATION_LOG_ENAB
 func StartConversationRecorder() {
 	conversationStart.Do(func() {
 		go func() {
+			if err := model.BackfillConversationLinks(); err != nil {
+				common.SysError("conversation link backfill failed")
+			}
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
 			for {
@@ -88,6 +91,10 @@ func BeginConversation(c *gin.Context, protocol string) *ConversationCapture {
 	limit := min(max(common.GetEnvOrDefault("CONVERSATION_LOG_MAX_BYTES", 2<<20), 64<<10), 8<<20)
 	r := &ConversationCapture{limit: limit}
 	r.entry = model.ConversationLog{RequestId: c.GetString(common.RequestIdKey), UserId: c.GetInt("id"), CreatedAt: time.Now().Unix(), TokenId: c.GetInt(string(constant.ContextKeyTokenId)), TokenName: c.GetString("token_name"), Protocol: protocol}
+	r.entry.Kind = "chat"
+	if protocol == "websocket" || strings.HasSuffix(strings.TrimSuffix(c.Request.URL.Path, "/"), "/responses") {
+		r.entry.Kind = "responses"
+	}
 	if r.entry.RequestId == "" {
 		r.entry.RequestId = common.NewRequestId()
 	}

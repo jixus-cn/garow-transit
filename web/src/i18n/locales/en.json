@@ -7455,6 +7455,25 @@
     "Workspace": "Workspace",
     "Activity": "Activity",
     "A shared space for focused teamwork.": "A shared space for focused teamwork.",
-    "For internal team use.": "For internal team use."
+    "For internal team use.": "For internal team use.",
+    "Assistant": "Assistant",
+    "Developer": "Developer",
+    "Tool result": "Tool result",
+    "Linked by Responses IDs within the same user. Select a turn to view its branch. Unlinked requests remain separate context snapshots.": "Linked by Responses IDs within the same user. Select a turn to view its branch. Unlinked requests remain separate context snapshots.",
+    "Earlier context is missing, expired, or ambiguous. Only recorded content is shown.": "Earlier context is missing, expired, or ambiguous. Only recorded content is shown.",
+    "Conversation view limit reached. Some turns or bodies are omitted.": "Conversation view limit reached. Some turns or bodies are omitted.",
+    "Conversation turns": "Conversation turns",
+    "Turn {{number}}": "Turn {{number}}",
+    "Context snapshot": "Context snapshot",
+    "MM-DD HH:mm:ss": "MM-DD HH:mm:ss",
+    "Conversation messages": "Conversation messages",
+    "YYYY-MM-DD HH:mm:ss": "YYYY-MM-DD HH:mm:ss",
+    "This turn is partial or its body is unavailable.": "This turn is partial or its body is unavailable.",
+    "Reasoning summary": "Reasoning summary",
+    "Tool call or result": "Tool call or result",
+    "Copy message": "Copy message",
+    "Conversation replay": "Conversation replay",
+    "Request details": "Request details",
+    "Protocol": "Protocol"
   }
 }

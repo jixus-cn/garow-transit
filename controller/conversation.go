@@ -29,3 +29,21 @@ func GetConversation(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	common.ApiSuccess(c, gin.H{"record": entry, "content": content})
 }
+
+func GetConversationThread(c *gin.Context) {
+	if _, ok := middleware.GetSessionAuthIdentity(c); !ok || c.GetInt("role") != common.RoleRootUser {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	thread, err := model.GetConversationThread(c.Param("request_id"), model.ConversationCutoff())
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	common.ApiSuccess(c, thread)
+}

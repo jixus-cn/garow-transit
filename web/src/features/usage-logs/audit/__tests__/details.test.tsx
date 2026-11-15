@@ -137,6 +137,53 @@ it('shows an unavailable message when conversation access fails', async () => {
   expect(screen.queryByText('Assistant response')).not.toBeInTheDocument()
 })
 
+it('opens Responses replay by default and keeps request details available on another tab', async () => {
+  const detail = {
+    record: {
+      request_id: entry.request_id,
+      user_id: 1,
+      created_at: entry.created_at,
+      model: 'fixture',
+      response_model: 'actual',
+      token_id: 1,
+      token_name: 'team',
+      protocol: 'http',
+      kind: 'responses',
+      outcome: 'completed',
+      truncated: false,
+    },
+    content: {
+      request: '{"input":"replay question"}',
+      response: '{}',
+      latest_input: 'replay question',
+      output: 'replay answer',
+    },
+  }
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: String(url).endsWith('/thread')
+        ? {
+            selected_request_id: entry.request_id,
+            missing_previous: false,
+            truncated: false,
+            turns: [{ ...detail, parent_request_id: '' }],
+          }
+        : detail,
+    },
+  }))
+  renderWithQueryClient(
+    <AuditLogDetailsDialog entry={{ ...entry, category: 'conversation' }} />
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(await screen.findByText('replay answer')).toBeVisible()
+  expect(
+    screen.getByRole('tab', { name: 'Conversation replay' })
+  ).toHaveAttribute('aria-selected', 'true')
+  await userEvent.click(screen.getByRole('tab', { name: 'Request details' }))
+  expect(await screen.findByText('Request context and tools')).toBeVisible()
+})
+
 it.each([
   [100, 'root'],
   [10, 'admin'],

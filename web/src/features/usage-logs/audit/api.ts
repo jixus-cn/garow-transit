@@ -65,6 +65,9 @@ export interface ConversationDetail {
     token_id: number
     token_name: string
     protocol: string
+    kind?: string
+    response_id?: string
+    previous_response_id?: string
     outcome: string
     truncated: boolean
   }
@@ -74,6 +77,29 @@ export interface ConversationDetail {
     latest_input: string
     output: string
   }
+}
+
+export interface ConversationThread {
+  selected_request_id: string
+  missing_previous: boolean
+  truncated: boolean
+  turns: {
+    record: ConversationDetail['record']
+    parent_request_id: string
+    content: ConversationDetail['content'] | null
+  }[]
+}
+
+export async function getConversationThread(
+  requestId: string
+): Promise<ConversationThread> {
+  const response = await api.get<ApiResponse<ConversationThread>>(
+    `/api/conversation/${encodeURIComponent(requestId)}/thread`
+  )
+  if (!response.data.success || !response.data.data) {
+    throw createServerError(response.data, t('Failed to load conversation'))
+  }
+  return response.data.data
 }
 
 export async function getConversation(

@@ -24,6 +24,7 @@ import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -31,6 +32,7 @@ import {
   DetailSection,
 } from '../../components/dialogs/log-detail-layout'
 import { getConversation, type AuditLog } from '../api'
+import { ResponsesConversation } from './responses-conversation'
 
 function ContentSection(props: {
   label: string
@@ -95,55 +97,73 @@ function ConversationBody(props: { entry: AuditLog }) {
         </Alert>
       )}
       {!query.isError && detail && (
-        <>
-          <DetailSection label={t('Request')}>
-            <DetailRow label={t('Username')} value={props.entry.username} />
-            <DetailRow
-              label={t('Request ID')}
-              value={detail.record.request_id}
-              mono
-            />
-            <DetailRow label={t('Model')} value={detail.record.model || '—'} />
-            <DetailRow
-              label={t('Response model')}
-              value={detail.record.response_model || '—'}
-            />
-            <DetailRow
-              label={t('Token name')}
-              value={detail.record.token_name || `#${detail.record.token_id}`}
-            />
-            <DetailRow label={t('Protocol')} value={detail.record.protocol} />
-            <DetailRow
-              label={t('Result')}
-              value={outcomes[detail.record.outcome] ?? detail.record.outcome}
-            />
-          </DetailSection>
-          {detail.record.truncated && (
-            <Alert>
-              <AlertDescription>
-                {t('Recording limit reached. This record is partial.')}
-              </AlertDescription>
-            </Alert>
+        <Tabs
+          defaultValue={detail.record.kind === 'responses' ? 'chat' : 'details'}
+        >
+          <TabsList>
+            {detail.record.kind === 'responses' && (
+              <TabsTrigger value='chat'>{t('Conversation replay')}</TabsTrigger>
+            )}
+            <TabsTrigger value='details'>{t('Request details')}</TabsTrigger>
+          </TabsList>
+          {detail.record.kind === 'responses' && (
+            <TabsContent value='chat'>
+              <ResponsesConversation requestId={props.entry.request_id} />
+            </TabsContent>
           )}
-          <ContentSection
-            label={t('Latest user input')}
-            value={detail.content.latest_input}
-          />
-          <ContentSection
-            label={t('Assistant response')}
-            value={detail.content.output}
-          />
-          <ContentSection
-            label={t('Request context and tools')}
-            value={detail.content.request}
-            json
-          />
-          <ContentSection
-            label={t('Response events and tool calls')}
-            value={detail.content.response}
-            json
-          />
-        </>
+          <TabsContent value='details' className='space-y-4'>
+            <DetailSection label={t('Request')}>
+              <DetailRow label={t('Username')} value={props.entry.username} />
+              <DetailRow
+                label={t('Request ID')}
+                value={detail.record.request_id}
+                mono
+              />
+              <DetailRow
+                label={t('Model')}
+                value={detail.record.model || '—'}
+              />
+              <DetailRow
+                label={t('Response model')}
+                value={detail.record.response_model || '—'}
+              />
+              <DetailRow
+                label={t('Token name')}
+                value={detail.record.token_name || `#${detail.record.token_id}`}
+              />
+              <DetailRow label={t('Protocol')} value={detail.record.protocol} />
+              <DetailRow
+                label={t('Result')}
+                value={outcomes[detail.record.outcome] ?? detail.record.outcome}
+              />
+            </DetailSection>
+            {detail.record.truncated && (
+              <Alert>
+                <AlertDescription>
+                  {t('Recording limit reached. This record is partial.')}
+                </AlertDescription>
+              </Alert>
+            )}
+            <ContentSection
+              label={t('Latest user input')}
+              value={detail.content.latest_input}
+            />
+            <ContentSection
+              label={t('Assistant response')}
+              value={detail.content.output}
+            />
+            <ContentSection
+              label={t('Request context and tools')}
+              value={detail.content.request}
+              json
+            />
+            <ContentSection
+              label={t('Response events and tool calls')}
+              value={detail.content.response}
+              json
+            />
+          </TabsContent>
+        </Tabs>
       )}
     </>
   )

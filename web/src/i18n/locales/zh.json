@@ -7455,6 +7455,25 @@
     "Workspace": "工作空间",
     "Activity": "工作动态",
     "A shared space for focused teamwork.": "专注团队协作的共享空间。",
-    "For internal team use.": "仅供内部团队使用。"
+    "For internal team use.": "仅供内部团队使用。",
+    "Assistant": "助手",
+    "Developer": "开发者",
+    "Tool result": "工具结果",
+    "Linked by Responses IDs within the same user. Select a turn to view its branch. Unlinked requests remain separate context snapshots.": "按同一用户的 Responses ID 关联。选择轮次查看对应分支；没有关联 ID 的请求单独作为上下文快照。",
+    "Earlier context is missing, expired, or ambiguous. Only recorded content is shown.": "前文缺失、已过期或关联存在歧义，仅展示实际记录的内容。",
+    "Conversation view limit reached. Some turns or bodies are omitted.": "已达到会话查看上限，部分轮次或正文未加载。",
+    "Conversation turns": "请求轮次",
+    "Turn {{number}}": "第 {{number}} 轮",
+    "Context snapshot": "上下文快照",
+    "MM-DD HH:mm:ss": "MM-DD HH:mm:ss",
+    "Conversation messages": "对话消息",
+    "YYYY-MM-DD HH:mm:ss": "YYYY-MM-DD HH:mm:ss",
+    "This turn is partial or its body is unavailable.": "本轮记录不完整或正文未加载。",
+    "Reasoning summary": "推理摘要",
+    "Tool call or result": "工具调用或结果",
+    "Copy message": "复制消息",
+    "Conversation replay": "会话还原",
+    "Request details": "请求详情",
+    "Protocol": "Protocol"
   }
 }

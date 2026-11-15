@@ -12,6 +12,22 @@ database is separate. Only a live root dashboard session may read bodies through
 personal access tokens cannot read them. The UI loads bodies only while the
 detail dialog is open and discards its query cache on unmount.
 
+Responses records additionally expose a conversation replay tab. Explicit
+`response.id` / `previous_response_id` links are followed only within the same
+user. Each selected turn shows its ancestor path; sibling branches remain
+separate. Full client-supplied input history is rendered as a standalone snapshot
+when there is no link. Text similarity and time proximity never join requests.
+The replay shows instructions, user/assistant messages, tool calls/results and
+returned reasoning summaries. It cannot recover encrypted/internal reasoning,
+attachments, or upstream context that was never recorded. Chat Completions keeps
+request details and does not receive this replay UI.
+
+`GET /api/conversation/:request_id/thread` has the same root-session restriction.
+It returns at most 50 related turns and an 8 MiB content budget. Missing/expired
+or ambiguous parents, partial captures and omitted bodies are explicitly marked.
+An upgrade backfills link metadata from existing recorded bodies without
+altering the bodies or business accounts.
+
 Configuration:
 
 | Variable | Default | Bounds |
