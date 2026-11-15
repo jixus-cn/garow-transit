@@ -78,6 +78,65 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('loads conversation text only when opened and labels a partial capture', async () => {
+  const get = vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        record: {
+          request_id: entry.request_id,
+          model: 'requested',
+          response_model: 'actual',
+          token_name: 'team',
+          protocol: 'http',
+          outcome: 'interrupted',
+          truncated: true,
+        },
+        content: {
+          latest_input: 'fixture question',
+          output: 'fixture answer',
+          request: '{}',
+          response: '{}',
+        },
+      },
+    },
+  })
+  renderWithQueryClient(
+    <AuditLogDetailsDialog entry={{ ...entry, category: 'conversation' }} />
+  )
+  expect(get).not.toHaveBeenCalled()
+  const trigger = screen.getByRole('button', { name: 'Details' })
+  trigger.focus()
+  await userEvent.keyboard('{Enter}')
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Conversation details',
+  })
+  expect(await within(dialog).findByText('fixture question')).toBeVisible()
+  expect(within(dialog).getByText('fixture answer')).toBeVisible()
+  expect(
+    within(dialog).getByText('Recording limit reached. This record is partial.')
+  ).toBeVisible()
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(trigger).toHaveFocus()
+})
+
+it('shows an unavailable message when conversation access fails', async () => {
+  vi.spyOn(api, 'get').mockRejectedValue(new Error('denied'))
+  renderWithQueryClient(
+    <AuditLogDetailsDialog entry={{ ...entry, category: 'conversation' }} />
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(
+    await screen.findByText(
+      'Conversation unavailable, expired, or access denied.'
+    )
+  ).toBeVisible()
+  expect(screen.queryByText('Assistant response')).not.toBeInTheDocument()
+})
+
 it.each([
   [100, 'root'],
   [10, 'admin'],

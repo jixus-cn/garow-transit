@@ -26,7 +26,7 @@ import { useTheme } from '@/context/theme-provider'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import { TeamHome } from './components/sections/team-home'
 import { useHomePageContent } from './hooks'
 
 export function Home() {
@@ -121,13 +121,21 @@ export function Home() {
   }
 
   return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
+    <PublicLayout
+      showMainContainer={false}
+      siteName='Garow Workspace'
+      navLinks={[
+        { title: 'Workspace', href: '/dashboard', requiresAuth: true },
+        { title: 'Activity', href: '/usage-logs', requiresAuth: true },
+      ]}
+      headerProps={{ preferProvidedLinks: true, showVersion: false }}
+    >
+      <TeamHome isAuthenticated={isAuthenticated} />
+      <Footer
+        nameOverride='Garow Workspace'
+        description={t('A shared space for focused teamwork.')}
+        copyright={t('For internal team use.')}
+      />
     </PublicLayout>
   )
 }

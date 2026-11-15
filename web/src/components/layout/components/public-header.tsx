@@ -46,6 +46,8 @@ type AuthPromptTarget = {
 }
 
 export interface PublicHeaderProps {
+  preferProvidedLinks?: boolean
+  showVersion?: boolean
   navLinks?: TopNavLink[]
   mobileLinks?: TopNavLink[]
   navContent?: React.ReactNode
@@ -97,7 +99,10 @@ export function PublicHeader(props: PublicHeaderProps) {
   const user = auth.user
   const isAuthenticated = !!user
   const displaySiteName = customSiteName || systemName
-  const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
+  let links = navLinks
+  if (!props.preferProvidedLinks && dynamicLinks.length > 0) {
+    links = dynamicLinks
+  }
 
   let logoContent: ReactNode = (
     <HeaderLogo
@@ -234,7 +239,9 @@ export function PublicHeader(props: PublicHeaderProps) {
                   )}
                 </span>
               </Link>
-              <SystemUpdateAction presentation='version' />
+              {props.showVersion !== false && (
+                <SystemUpdateAction presentation='version' />
+              )}
             </div>
 
             {/* Desktop nav */}

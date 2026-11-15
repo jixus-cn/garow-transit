@@ -186,6 +186,7 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 	create, parseErr := normalizeResponsesWSCreateEvent(message, envelope, streamID)
 	var apiErr *types.NewAPIError
 	var upstreamURLs []string
+	var conversation *service.ConversationCapture
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			apiErr = types.NewError(fmt.Errorf("responses websocket request panic: %v", recovered), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -209,6 +210,9 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 				state.closeCode = websocket.CloseInternalServerErr
 			} else if err := s.client.WriteMessage(outgoing.kind, outgoing.body); err != nil {
 				state.closeCode = websocket.CloseInternalServerErr
+			} else if conversation != nil {
+				conversation.Observe(outgoing.body)
+				conversation.Observe([]byte("\n"))
 			}
 		}
 		if state.closeCode != 0 {
@@ -218,12 +222,20 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		close(state.done)
 		s.stateMu.Unlock()
 		s.clientWriteMu.Unlock()
+		if conversation != nil {
+			status := http.StatusOK
+			if apiErr != nil {
+				status = apiErr.StatusCode
+			}
+			conversation.Finish(status, state.closeCode != 0)
+		}
 	}()
 	request := s.request.Clone(s.ctx)
 	request.Body = io.NopCloser(bytes.NewReader(message))
 	request.ContentLength = int64(len(message))
 	request.Header.Set("Content-Type", "application/json")
 	apiErr = s.runner(request, requestID, func(c *gin.Context) *types.NewAPIError {
+		conversation = service.BeginConversation(c, "websocket")
 		// Each generation has its own middleware context and concurrency lease.
 		// Cancellation must stop the connection's readers too, not just this call.
 		cancelDone := make(chan struct{})
@@ -497,6 +509,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			}
 			if err := s.writeClient(incoming.kind, incoming.body); err != nil {
 				s.shutdown(websocket.CloseInternalServerErr, "")
+			} else if conversation := service.ConversationFromContext(c); conversation != nil {
+				conversation.Observe(incoming.body)
+				conversation.Observe([]byte("\n"))
 			}
 			if accepted && pendingControl != nil {
 				if err := s.writeTarget(websocket.TextMessage, pendingControl); err != nil {

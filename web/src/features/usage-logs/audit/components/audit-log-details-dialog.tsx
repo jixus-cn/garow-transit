@@ -34,6 +34,7 @@ import type { AuditLog } from '../api'
 import { auditFieldLabel, buildAuditDetails } from '../lib/audit-details'
 import { AuditDetailFields } from './audit-detail-fields'
 import { AuditDetailValue } from './audit-detail-value'
+import { ConversationDetailsDialog } from './conversation-details-dialog'
 
 export function AuditLogDetailsDialog(props: { entry: AuditLog }) {
   const { t } = useTranslation()
@@ -68,6 +69,9 @@ export function AuditLogDetailsDialog(props: { entry: AuditLog }) {
     props.entry.user_agent ||
     identifiers.length
   )
+  if (props.entry.category === 'conversation') {
+    return <ConversationDetailsDialog entry={props.entry} />
+  }
   return (
     <Dialog
       open={open}

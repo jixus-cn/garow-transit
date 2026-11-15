@@ -440,7 +440,8 @@ export function buildAuditDetails(
   if (entry.category === 'login') fallback = t('Login')
   if (entry.category === 'security') fallback = t('Account security')
   if (entry.category === 'access_token') fallback = t('Access Token')
-  const summary =
+  if (entry.category === 'conversation') fallback = t('Conversations')
+  let summary =
     renderAuditContent(
       {
         op: { action, params: summaryParams },
@@ -454,6 +455,9 @@ export function buildAuditDetails(
       },
       t
     ) || (entry.content && entry.content !== action ? entry.content : fallback)
+  if (entry.category === 'conversation') {
+    summary = `${t('Conversations')} · ${entry.content.replace(/^Conversation · /, '')}`
+  }
   const admin = isAuditDetailObject(metadata.admin_info)
     ? metadata.admin_info
     : {}

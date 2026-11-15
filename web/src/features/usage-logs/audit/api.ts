@@ -54,6 +54,39 @@ export interface AuditFilters {
   username?: string
   request_id?: string
 }
+
+export interface ConversationDetail {
+  record: {
+    request_id: string
+    user_id: number
+    created_at: number
+    model: string
+    response_model: string
+    token_id: number
+    token_name: string
+    protocol: string
+    outcome: string
+    truncated: boolean
+  }
+  content: {
+    request: string
+    response: string
+    latest_input: string
+    output: string
+  }
+}
+
+export async function getConversation(
+  requestId: string
+): Promise<ConversationDetail> {
+  const response = await api.get<ApiResponse<ConversationDetail>>(
+    `/api/conversation/${encodeURIComponent(requestId)}`
+  )
+  if (!response.data.success || !response.data.data) {
+    throw createServerError(response.data, t('Failed to load conversation'))
+  }
+  return response.data.data
+}
 export async function getAuditLogs(
   scope: 'all' | 'self',
   params: AuditFilters
