@@ -39,8 +39,9 @@ func ConversationRecording() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		clientContext := c.Request.Context()
 		c.Writer = &conversationResponseWriter{ResponseWriter: c.Writer, recorder: r}
-		defer func() { r.Finish(c.Writer.Status(), c.Request.Context().Err() != nil) }()
+		defer func() { r.Finish(c.Writer.Status(), clientContext.Err() != nil) }()
 		c.Next()
 	}
 }
