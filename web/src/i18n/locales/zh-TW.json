@@ -7474,6 +7474,14 @@
     "Copy message": "复制消息",
     "Conversation replay": "会话还原",
     "Request details": "请求详情",
-    "Protocol": "Protocol"
+    "Protocol": "Protocol",
+    "Latest exchange": "本輪問答",
+    "Show full text": "展開全文",
+    "Show less text": "收起全文",
+    "Focus selected turn": "只看選中輪次",
+    "Show earlier turns": "展開歷史輪次",
+    "Hide supplied context": "收起輸入上下文",
+    "Show supplied context": "展開輸入上下文",
+    "Earlier input and instructions are folded. Tool details can be expanded below.": "歷史輸入和指令已摺疊，工具詳情可單獨展開。"
   }
 }

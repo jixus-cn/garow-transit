@@ -7474,6 +7474,14 @@
     "Copy message": "Copy message",
     "Conversation replay": "Conversation replay",
     "Request details": "Request details",
-    "Protocol": "Protocol"
+    "Protocol": "Protocol",
+    "Latest exchange": "Последний обмен",
+    "Show full text": "Показать весь текст",
+    "Show less text": "Свернуть текст",
+    "Focus selected turn": "Только выбранный ход",
+    "Show earlier turns": "Показать предыдущие ходы",
+    "Hide supplied context": "Скрыть переданный контекст",
+    "Show supplied context": "Показать переданный контекст",
+    "Earlier input and instructions are folded. Tool details can be expanded below.": "Предыдущие сообщения и инструкции свернуты. Подробности инструментов можно раскрыть отдельно."
   }
 }

@@ -17,13 +17,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import type { ConversationThread } from '../api'
+import type { AuditLog, ConversationThread } from '../api'
+import { ConversationContent } from '../components/conversation-content'
+import { ConversationDetailsDialog } from '../components/conversation-details-dialog'
 import { ResponsesConversation } from '../components/responses-conversation'
 import {
   responsesThreadPath,
@@ -121,7 +129,7 @@ afterEach(() => {
 it('keeps tool calls and results in order and follows only the selected branch', () => {
   const path = responsesThreadPath(thread, 'tool')
   expect(path.map((turn) => turn.record.request_id)).toEqual(['root', 'tool'])
-  const messages = path.flatMap(responsesTurnMessages)
+  const messages = path.flatMap((turn) => responsesTurnMessages(turn))
   expect(messages.map((message) => message.body)).toEqual([
     'root question',
     '{"path":"README.md"}',
@@ -244,4 +252,179 @@ it('labels missing context and omitted bodies instead of inventing messages', as
     screen.getByText('This turn is partial or its body is unavailable.')
   ).toBeVisible()
   expect(screen.queryByText('tool branch answer')).not.toBeInTheDocument()
+})
+
+const auditEntry: AuditLog = {
+  event_id: 'fixture',
+  user_id: 1,
+  username: 'fixture',
+  actor_role: 100,
+  created_at: record.created_at,
+  category: 'conversation',
+  action: 'conversation.record',
+  token_ref: '',
+  ip: '',
+  user_agent: '',
+  method: 'POST',
+  route: '/v1/responses',
+  status: 200,
+  success: true,
+  request_id: 'root',
+  content: '',
+  other: null,
+}
+
+it('opens old records as the latest exchange and loads replay only when selected', async () => {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: String(url).endsWith('/thread')
+        ? thread
+        : {
+            ...root,
+            content: {
+              ...root.content,
+              output: 'latest answer',
+              request: JSON.stringify({
+                input: 'root question',
+                instructions: 'raw context fixture',
+              }),
+            },
+          },
+    },
+  }))
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ConversationDetailsDialog entry={auditEntry} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(await screen.findByText('latest answer')).toBeVisible()
+  expect(screen.queryByText(/raw context fixture/)).not.toBeInTheDocument()
+  expect(get.mock.calls.map(([url]) => url)).toEqual(['/api/conversation/root'])
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Request context and tools' })
+  )
+  expect(await screen.findByText(/raw context fixture/)).toBeVisible()
+  await userEvent.click(
+    screen.getByRole('tab', { name: 'Conversation replay' })
+  )
+  await waitFor(() =>
+    expect(
+      get.mock.calls.some(([url]) => String(url).endsWith('/thread'))
+    ).toBe(true)
+  )
+})
+
+it('focuses the selected turn and reveals only its own recorded context on demand', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: thread },
+  })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ResponsesConversation requestId='tool' />
+    </QueryClientProvider>
+  )
+  expect(await screen.findByText('tool branch answer')).toBeVisible()
+  expect(screen.queryByText('root question')).not.toBeInTheDocument()
+  expect(screen.queryByText('file result')).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: /Tool result/ }))
+  expect(await screen.findByText('file result')).toBeVisible()
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Show earlier turns' })
+  )
+  expect(await screen.findByText('root question')).toBeVisible()
+  expect(screen.queryByText('other branch answer')).not.toBeInTheDocument()
+})
+
+it('keeps supplied history separate from the newest user input in compact replay', () => {
+  const turn = {
+    ...root,
+    content: {
+      ...root.content,
+      request: JSON.stringify({
+        instructions: 'instructions fixture',
+        input: [
+          { role: 'user', content: 'earlier question' },
+          { role: 'assistant', content: 'earlier reply' },
+          { role: 'user', content: 'latest question' },
+        ],
+      }),
+      response: '{}',
+      output: 'latest answer',
+    },
+  }
+  expect(
+    responsesTurnMessages(turn, false).map((message) => message.body)
+  ).toEqual(['latest question', 'latest answer'])
+  expect(responsesTurnMessages(turn).map((message) => message.body)).toContain(
+    'earlier reply'
+  )
+})
+
+it('previews long text without losing the full copy or keyboard expansion', async () => {
+  const user = userEvent.setup()
+  const value = `${'fixture text '.repeat(400)}end of fixture`
+  render(<ConversationContent label='fixture' value={value} />)
+  expect(screen.queryByText(value)).not.toBeInTheDocument()
+  const expand = screen.getByRole('button', { name: 'Show full text' })
+  expand.focus()
+  await user.keyboard('{Enter}')
+  expect(await screen.findByText(value)).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: 'Show less text' })
+  ).toHaveAttribute('aria-expanded', 'true')
+  await user.click(screen.getByRole('button', { name: 'Copy fixture' }))
+  expect(await navigator.clipboard.readText()).toBe(value)
+})
+
+it('clears conversation queries when the dialog closes and keeps chat records compatible', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...root,
+        record: { ...record, kind: 'chat', truncated: true },
+        content: { ...root.content, output: 'chat reply fixture' },
+      },
+    },
+  })
+  const client = new QueryClient()
+  render(
+    <QueryClientProvider client={client}>
+      <ConversationDetailsDialog entry={auditEntry} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(await screen.findByText('chat reply fixture')).toBeVisible()
+  expect(
+    screen.queryByRole('tab', { name: 'Conversation replay' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText('Recording limit reached. This record is partial.')
+  ).toBeVisible()
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(
+      client.getQueryCache().findAll({ queryKey: ['conversation'] })
+    ).toHaveLength(0)
+  )
+})
+
+it('shows a recording failure without rendering stale conversation content', async () => {
+  vi.spyOn(api, 'get').mockRejectedValue(new Error('fixture failure'))
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ConversationDetailsDialog entry={auditEntry} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(
+    await screen.findByText(
+      'Conversation unavailable, expired, or access denied.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('tab', { name: 'Latest exchange' })
+  ).not.toBeInTheDocument()
 })

@@ -20,7 +20,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -32,44 +31,12 @@ import {
   DetailSection,
 } from '../../components/dialogs/log-detail-layout'
 import { getConversation, type AuditLog } from '../api'
+import { ConversationContent } from './conversation-content'
 import { ResponsesConversation } from './responses-conversation'
-
-function ContentSection(props: {
-  label: string
-  value: string
-  json?: boolean
-}) {
-  const { t } = useTranslation()
-  let text = props.value
-  if (props.json && text) {
-    try {
-      text = JSON.stringify(JSON.parse(text), null, 2)
-    } catch {
-      /* Preserve partial text. */
-    }
-  }
-  return (
-    <DetailSection label={props.label}>
-      {text ? (
-        <>
-          <CopyButton
-            value={text}
-            size='sm'
-            aria-label={t('Copy {{label}}', { label: props.label })}
-          />
-          <pre className='bg-muted/40 max-h-80 overflow-y-auto rounded-md border p-3 text-xs break-words whitespace-pre-wrap'>
-            {text}
-          </pre>
-        </>
-      ) : (
-        <p className='text-muted-foreground text-sm'>{t('No recorded text')}</p>
-      )}
-    </DetailSection>
-  )
-}
 
 function ConversationBody(props: { entry: AuditLog }) {
   const { t } = useTranslation()
+  const [tab, setTab] = useState<string>('details')
   const viewerId = useAuthStore((state) => state.auth.user?.id)
   const query = useQuery({
     queryKey: ['conversation', viewerId, props.entry.request_id],
@@ -97,18 +64,18 @@ function ConversationBody(props: { entry: AuditLog }) {
         </Alert>
       )}
       {!query.isError && detail && (
-        <Tabs
-          defaultValue={detail.record.kind === 'responses' ? 'chat' : 'details'}
-        >
+        <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
           <TabsList>
+            <TabsTrigger value='details'>{t('Latest exchange')}</TabsTrigger>
             {detail.record.kind === 'responses' && (
               <TabsTrigger value='chat'>{t('Conversation replay')}</TabsTrigger>
             )}
-            <TabsTrigger value='details'>{t('Request details')}</TabsTrigger>
           </TabsList>
           {detail.record.kind === 'responses' && (
             <TabsContent value='chat'>
-              <ResponsesConversation requestId={props.entry.request_id} />
+              {tab === 'chat' && (
+                <ResponsesConversation requestId={props.entry.request_id} />
+              )}
             </TabsContent>
           )}
           <TabsContent value='details' className='space-y-4'>
@@ -144,23 +111,25 @@ function ConversationBody(props: { entry: AuditLog }) {
                 </AlertDescription>
               </Alert>
             )}
-            <ContentSection
+            <ConversationContent
               label={t('Latest user input')}
               value={detail.content.latest_input}
             />
-            <ContentSection
+            <ConversationContent
               label={t('Assistant response')}
               value={detail.content.output}
             />
-            <ContentSection
+            <ConversationContent
               label={t('Request context and tools')}
               value={detail.content.request}
               json
+              collapsed
             />
-            <ContentSection
+            <ConversationContent
               label={t('Response events and tool calls')}
               value={detail.content.response}
               json
+              collapsed
             />
           </TabsContent>
         </Tabs>

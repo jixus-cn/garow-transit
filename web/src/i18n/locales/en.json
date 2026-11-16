@@ -7474,6 +7474,14 @@
     "Copy message": "Copy message",
     "Conversation replay": "Conversation replay",
     "Request details": "Request details",
-    "Protocol": "Protocol"
+    "Protocol": "Protocol",
+    "Latest exchange": "Latest exchange",
+    "Show full text": "Show full text",
+    "Show less text": "Show less text",
+    "Focus selected turn": "Focus selected turn",
+    "Show earlier turns": "Show earlier turns",
+    "Hide supplied context": "Hide supplied context",
+    "Show supplied context": "Show supplied context",
+    "Earlier input and instructions are folded. Tool details can be expanded below.": "Earlier input and instructions are folded. Tool details can be expanded below."
   }
 }

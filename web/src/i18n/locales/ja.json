@@ -7474,6 +7474,14 @@
     "Copy message": "Copy message",
     "Conversation replay": "Conversation replay",
     "Request details": "Request details",
-    "Protocol": "Protocol"
+    "Protocol": "Protocol",
+    "Latest exchange": "今回のやり取り",
+    "Show full text": "全文を表示",
+    "Show less text": "全文を折りたたむ",
+    "Focus selected turn": "選択したターンのみ表示",
+    "Show earlier turns": "過去のターンを表示",
+    "Hide supplied context": "入力コンテキストを隠す",
+    "Show supplied context": "入力コンテキストを表示",
+    "Earlier input and instructions are folded. Tool details can be expanded below.": "過去の入力と指示は折りたたまれています。ツールの詳細は個別に展開できます。"
   }
 }

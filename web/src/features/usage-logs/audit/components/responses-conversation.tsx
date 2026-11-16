@@ -20,7 +20,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { CopyButton } from '@/components/copy-button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import dayjs from '@/lib/dayjs'
@@ -32,11 +31,14 @@ import {
   responsesThreadPath,
   responsesTurnMessages,
 } from '../lib/responses-thread'
+import { ConversationContent } from './conversation-content'
 
 export function ResponsesConversation(props: { requestId: string }) {
   const { t } = useTranslation()
   const viewerId = useAuthStore((state) => state.auth.user?.id)
   const [selectedId, setSelectedId] = useState(props.requestId)
+  const [showHistory, setShowHistory] = useState(false)
+  const [showContext, setShowContext] = useState(false)
   const query = useQuery({
     queryKey: ['conversation-thread', viewerId, props.requestId],
     queryFn: () => getConversationThread(props.requestId),
@@ -56,7 +58,8 @@ export function ResponsesConversation(props: { requestId: string }) {
     )
   }
   const thread = query.data
-  const path = responsesThreadPath(thread, selectedId)
+  const branch = responsesThreadPath(thread, selectedId)
+  const path = showHistory ? branch : branch.slice(-1)
   const roles: Record<string, string> = {
     user: t('User'),
     assistant: t('Assistant'),
@@ -95,6 +98,33 @@ export function ResponsesConversation(props: { requestId: string }) {
           </AlertDescription>
         </Alert>
       )}
+      <div className='flex flex-wrap gap-2'>
+        <Button
+          size='sm'
+          variant='outline'
+          aria-pressed={showHistory}
+          onClick={() => setShowHistory(!showHistory)}
+        >
+          {showHistory ? t('Focus selected turn') : t('Show earlier turns')}
+        </Button>
+        <Button
+          size='sm'
+          variant='outline'
+          aria-pressed={showContext}
+          onClick={() => setShowContext(!showContext)}
+        >
+          {showContext
+            ? t('Hide supplied context')
+            : t('Show supplied context')}
+        </Button>
+      </div>
+      {!showContext && (
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Earlier input and instructions are folded. Tool details can be expanded below.'
+          )}
+        </p>
+      )}
       <div className='grid min-w-0 gap-4 md:grid-cols-[12rem_minmax(0,1fr)]'>
         <nav
           aria-label={t('Conversation turns')}
@@ -106,7 +136,11 @@ export function ResponsesConversation(props: { requestId: string }) {
               variant={
                 selectedId === turn.record.request_id ? 'secondary' : 'ghost'
               }
-              onClick={() => setSelectedId(turn.record.request_id)}
+              onClick={() => {
+                setSelectedId(turn.record.request_id)
+                setShowHistory(false)
+                setShowContext(false)
+              }}
               aria-pressed={selectedId === turn.record.request_id}
               className='h-auto shrink-0 flex-col items-start gap-1 px-3 py-2 text-left whitespace-normal'
             >
@@ -149,40 +183,32 @@ export function ResponsesConversation(props: { requestId: string }) {
                   {t('This turn is partial or its body is unavailable.')}
                 </p>
               )}
-              {responsesTurnMessages(turn).map((message) => (
+              {responsesTurnMessages(turn, showContext).map((message) => (
                 <article
                   key={message.id}
                   className={cn(
-                    'max-w-[95%] min-w-0 rounded-xl border p-4',
-                    message.role === 'user'
-                      ? 'bg-primary/5 ml-auto'
-                      : 'bg-muted/40 mr-auto'
+                    'max-w-[95%] min-w-0',
+                    message.role === 'user' ? 'ml-auto' : 'mr-auto'
                   )}
                 >
-                  <div className='mb-2 flex items-center justify-between gap-3 text-xs font-medium'>
-                    <span>
-                      {roles[message.role] ?? message.role}
-                      {message.kind === 'reasoning'
-                        ? ` · ${t('Reasoning summary')}`
-                        : ''}
-                      {message.kind === 'tool'
-                        ? ` · ${t('Tool call or result')}`
-                        : ''}
-                    </span>
-                    <CopyButton
-                      value={message.body}
-                      size='sm'
-                      aria-label={t('Copy message')}
-                    />
-                  </div>
-                  {message.name && (
-                    <p className='text-muted-foreground mb-2 text-xs break-all'>
-                      {message.name}
-                    </p>
-                  )}
-                  <pre className='min-w-0 font-sans text-sm leading-relaxed break-words whitespace-pre-wrap'>
-                    {message.body || t('No recorded text')}
-                  </pre>
+                  <ConversationContent
+                    label={[
+                      roles[message.role] ?? message.role,
+                      message.kind === 'reasoning'
+                        ? t('Reasoning summary')
+                        : '',
+                      message.kind === 'tool' ? t('Tool call or result') : '',
+                      message.name,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    value={message.body}
+                    collapsed={
+                      message.kind !== 'message' ||
+                      message.role === 'system' ||
+                      message.role === 'developer'
+                    }
+                  />
                 </article>
               ))}
             </section>

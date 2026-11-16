@@ -7474,6 +7474,14 @@
     "Copy message": "Copy message",
     "Conversation replay": "Conversation replay",
     "Request details": "Request details",
-    "Protocol": "Protocol"
+    "Protocol": "Protocol",
+    "Latest exchange": "Lượt trao đổi mới nhất",
+    "Show full text": "Hiện toàn bộ văn bản",
+    "Show less text": "Thu gọn văn bản",
+    "Focus selected turn": "Chỉ xem lượt đã chọn",
+    "Show earlier turns": "Hiện các lượt trước",
+    "Hide supplied context": "Ẩn ngữ cảnh đầu vào",
+    "Show supplied context": "Hiện ngữ cảnh đầu vào",
+    "Earlier input and instructions are folded. Tool details can be expanded below.": "Đầu vào trước đó và chỉ dẫn đã được thu gọn. Có thể mở riêng chi tiết công cụ."
   }
 }

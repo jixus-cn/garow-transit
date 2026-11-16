@@ -109,7 +109,8 @@ function messages(value: unknown, prefix: string): ResponsesMessage[] {
 }
 
 export function responsesTurnMessages(
-  turn: ConversationThread['turns'][number]
+  turn: ConversationThread['turns'][number],
+  includeContext = true
 ): ResponsesMessage[] {
   if (!turn.content) return []
   const requestObject = object(parse(turn.content.request))
@@ -117,7 +118,11 @@ export function responsesTurnMessages(
     ? object(requestObject.response)
     : requestObject
   const result: ResponsesMessage[] = []
-  if (typeof request.instructions === 'string' && request.instructions) {
+  if (
+    includeContext &&
+    typeof request.instructions === 'string' &&
+    request.instructions
+  ) {
     result.push({
       id: `${turn.record.request_id}:instructions`,
       role: 'system',
@@ -126,7 +131,17 @@ export function responsesTurnMessages(
       body: request.instructions,
     })
   }
-  result.push(...messages(request.input, `${turn.record.request_id}:input`))
+  const input = messages(request.input, `${turn.record.request_id}:input`)
+  let latestUser = -1
+  for (let index = input.length - 1; index >= 0; index--) {
+    if (input[index].role === 'user') {
+      latestUser = index
+      break
+    }
+  }
+  result.push(
+    ...(includeContext || latestUser < 0 ? input : input.slice(latestUser))
+  )
   const response = parse(turn.content.response)
   let output = object(response).output
   if (Array.isArray(response)) {

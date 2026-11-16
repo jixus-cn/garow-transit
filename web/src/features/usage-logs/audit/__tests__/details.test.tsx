@@ -137,7 +137,7 @@ it('shows an unavailable message when conversation access fails', async () => {
   expect(screen.queryByText('Assistant response')).not.toBeInTheDocument()
 })
 
-it('opens Responses replay by default and keeps request details available on another tab', async () => {
+it('opens the latest exchange by default and keeps Responses replay available on demand', async () => {
   const detail = {
     record: {
       request_id: entry.request_id,
@@ -177,10 +177,14 @@ it('opens Responses replay by default and keeps request details available on ano
   )
   await userEvent.click(screen.getByRole('button', { name: 'Details' }))
   expect(await screen.findByText('replay answer')).toBeVisible()
-  expect(
+  expect(screen.getByRole('tab', { name: 'Latest exchange' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await userEvent.click(
     screen.getByRole('tab', { name: 'Conversation replay' })
-  ).toHaveAttribute('aria-selected', 'true')
-  await userEvent.click(screen.getByRole('tab', { name: 'Request details' }))
+  )
+  await userEvent.click(screen.getByRole('tab', { name: 'Latest exchange' }))
   expect(await screen.findByText('Request context and tools')).toBeVisible()
 })
 
