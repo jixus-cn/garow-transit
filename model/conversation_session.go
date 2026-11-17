@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ConversationSession is the metadata skeleton of one reconstructed conversation.
@@ -75,6 +76,16 @@ func conversationSessionKey(prefix, seed string) string {
 	return prefix + hex.EncodeToString(sum[:12])
 }
 
+// uniqueSessionKey makes a session key unique per creating request. Many IDE
+// sessions share an identical first user item (injected environment context),
+// so a seed-only key would collide; matching uses hash sequences, not the key.
+func uniqueSessionKey(prefix, seed, requestId string) string {
+	if len(requestId) > 64 {
+		requestId = requestId[:64]
+	}
+	return conversationSessionKey(prefix, seed) + ":" + requestId
+}
+
 // conversationUserDelta compares hash sequences positionally. Identical texts at
 // different positions stay distinct; only a tail extension yields new messages.
 func conversationUserDelta(stored []string, items []ConversationUserItem) ([]ConversationUserItem, bool) {
@@ -121,19 +132,15 @@ func newConversationSession(entry *ConversationLog, key, clientKey, source strin
 // source label tells the UI these fragments are not attributed to a conversation.
 func residualConversationSession(tx *gorm.DB, entry *ConversationLog) (*ConversationSession, error) {
 	key := conversationSessionKey("u:", fmt.Sprintf("%d", entry.UserId))
-	var found ConversationSession
-	err := tx.Where("session_key = ?", key).First(&found).Error
-	if err == nil {
-		return &found, nil
-	}
-	if err != gorm.ErrRecordNotFound {
-		return nil, err
-	}
 	session := newConversationSession(entry, key, "", "residual", 0, "")
-	if err := tx.Create(session).Error; err != nil {
+	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "session_key"}}, DoNothing: true}).Create(session).Error; err != nil {
 		return nil, err
 	}
-	return session, nil
+	var found ConversationSession
+	if err := tx.Where("session_key = ?", key).First(&found).Error; err != nil {
+		return nil, err
+	}
+	return &found, nil
 }
 
 // resolveConversationSession joins a request to a session using only explicit
@@ -151,7 +158,7 @@ func resolveConversationSession(tx *gorm.DB, entry *ConversationLog, ex *Convers
 			return nil, nil, err
 		}
 		if session == nil {
-			session = newConversationSession(entry, conversationSessionKey("c:", ex.ClientKey), ex.ClientKey, "client", 0, "")
+			session = newConversationSession(entry, uniqueSessionKey("c:", ex.ClientKey, entry.RequestId), ex.ClientKey, "client", 0, "")
 		}
 	}
 	if session == nil && ex.PrevResponseId != "" {
@@ -203,10 +210,7 @@ func resolveConversationSession(tx *gorm.DB, entry *ConversationLog, ex *Convers
 					break
 				}
 			}
-			if parent > 0 {
-				seed = fmt.Sprintf("%s|b%d", seed, parent)
-			}
-			session = newConversationSession(entry, conversationSessionKey("p:", seed), "", "prefix", parent, reason)
+			session = newConversationSession(entry, uniqueSessionKey("p:", seed, entry.RequestId), "", "prefix", parent, reason)
 		}
 	}
 	if session == nil {
@@ -228,10 +232,7 @@ func resolveConversationSession(tx *gorm.DB, entry *ConversationLog, ex *Convers
 	if compatible {
 		return session, newItems, nil
 	}
-	child := newConversationSession(entry, fmt.Sprintf("%s:b%d", session.SessionKey, session.Id), session.ClientKey, session.Source, session.Id, "branch")
-	if child.Source == "prefix" {
-		child.SessionKey = conversationSessionKey("p:", fmt.Sprintf("%d|%d|%s|b%d", entry.UserId, entry.TokenId, ex.UserItems[0].Hash, session.Id))
-	}
+	child := newConversationSession(entry, uniqueSessionKey("b:", fmt.Sprintf("%d", session.Id), entry.RequestId), session.ClientKey, session.Source, session.Id, "branch")
 	if err := tx.Create(child).Error; err != nil {
 		return nil, nil, err
 	}
@@ -356,9 +357,10 @@ func truncateConversationText(text string, max int) (string, bool) {
 }
 
 // PendingConversationBackfill selects legacy rows not yet mapped to a session.
+// Migrated rows carry NULL session_state; freshly inserted rows carry ”.
 func PendingConversationBackfill(limit int) ([]ConversationLog, error) {
 	var rows []ConversationLog
-	err := DB.Where("session_state = ? AND payload IS NOT NULL", "").
+	err := DB.Where("(session_state = ? OR session_state IS NULL) AND payload IS NOT NULL", "").
 		Order("user_id, created_at, id").Limit(limit).Find(&rows).Error
 	return rows, err
 }

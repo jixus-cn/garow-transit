@@ -640,6 +640,20 @@ func TestConversationSessionBackfill(t *testing.T) {
 		assert.EqualValues(t, 1, count, "placeholder recovery is idempotent")
 	})
 
+	t.Run("migrated NULL session_state rows are backfilled", func(t *testing.T) {
+		row := model.ConversationLog{RequestId: "old-null", UserId: 1, TokenId: 42, CreatedAt: 1600, Model: "fixture-model", Kind: "responses", Outcome: "completed"}
+		content := model.ConversationContent{Request: sessionRequestBody("null-state"), Response: `{"output":[]}`, Output: "null reply"}
+		require.NoError(t, model.StoreConversation(&row, content, model.AuditLog{EventId: "old-null", UserId: 1, Username: "fixture-user", ActorRole: 1, Category: model.AuditCategoryConversation}))
+		require.NoError(t, db.Model(&model.ConversationLog{}).Where("request_id = ?", "old-null").Update("session_state", nil).Error)
+		service.BackfillConversationSessions()
+		var ledger model.ConversationLog
+		require.NoError(t, db.Where("request_id = ?", "old-null").First(&ledger).Error)
+		assert.Equal(t, "linked", ledger.SessionState)
+		var message model.ConversationMessage
+		require.NoError(t, db.Where("request_id = ? AND role = ?", "old-null", "assistant").First(&message).Error)
+		assert.Equal(t, "null reply", message.Content)
+	})
+
 	t.Run("ancestor row joins live-created session", func(t *testing.T) {
 		runSessionCapture(t, "live-new", sessionRequestBody("alpha", "beta"), sessionResponseText("live reply"), false)
 		var live model.ConversationSession
@@ -806,6 +820,17 @@ func TestConversationSessionStorageMatrix(t *testing.T) {
 			messages, err := model.SearchConversationMessages("tw_", 1, 0, 0, 10)
 			require.NoError(t, err)
 			assert.Empty(t, messages, "LIKE wildcard escaping works on "+dialect)
+			residualEx := &model.ConversationExtraction{Placeholder: true}
+			r1 := model.ConversationLog{RequestId: "res-1", UserId: 1, TokenId: 7, CreatedAt: 2500, Model: "m", Kind: "responses", Outcome: "completed"}
+			require.NoError(t, model.StoreSessionConversation(&r1, residualEx, "fragment one", 0, 65536, nil, audit, false))
+			r2 := model.ConversationLog{RequestId: "res-2", UserId: 1, TokenId: 7, CreatedAt: 2600, Model: "m", Kind: "responses", Outcome: "completed"}
+			require.NoError(t, model.StoreSessionConversation(&r2, residualEx, "fragment two", 0, 65536, nil, audit, false))
+			var residualSessions []model.ConversationSession
+			require.NoError(t, db.Where("source = ?", "residual").Find(&residualSessions).Error)
+			require.Len(t, residualSessions, 1, "residual catch-all is one per user across dialects")
+			var residualMessages int64
+			require.NoError(t, db.Model(&model.ConversationMessage{}).Where("session_id = ?", residualSessions[0].Id).Count(&residualMessages).Error)
+			assert.EqualValues(t, 2, residualMessages)
 			require.NoError(t, model.CleanupConversations(3000))
 			var remaining int64
 			require.NoError(t, db.Model(&model.ConversationMessage{}).Count(&remaining).Error)
