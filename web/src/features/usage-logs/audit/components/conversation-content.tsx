@@ -29,7 +29,7 @@ import {
 
 import { DetailSection } from '../../components/dialogs/log-detail-layout'
 
-function ConversationText(props: {
+export function ConversationText(props: {
   value: string
   label: string
   json?: boolean

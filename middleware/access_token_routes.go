@@ -250,6 +250,15 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/data/flow":                        accessTokenScopeRule("log:read"),
 	"GET /api/data/flow/self":                   accessTokenScopeRule("usage:read"),
 
+	// router/api-router.go: conversation audit bodies and sessions are root
+	// browser-session only; a personal access token must never reach them.
+	"GET /api/conversation/:request_id":           accessTokenSessionRule,
+	"GET /api/conversation/:request_id/thread":    accessTokenSessionRule,
+	"GET /api/conversations/sessions":             accessTokenSessionRule,
+	"GET /api/conversations/sessions/:id":         accessTokenSessionRule,
+	"GET /api/conversations/messages/search":      accessTokenSessionRule,
+	"GET /api/conversations/requests/:request_id": accessTokenSessionRule,
+
 	// router/api-router.go: /api/group, /api/prefill_group
 	"GET /api/group/":               accessTokenScopeRule("group:read"),
 	"GET /api/prefill_group/":       accessTokenScopeRule("group:read"),

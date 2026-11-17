@@ -33,19 +33,28 @@ Configuration:
 | Variable | Default | Bounds |
 | --- | --- | --- |
 | `CONVERSATION_LOG_ENABLED` | false | Set exactly `true` to capture |
-| `CONVERSATION_LOG_RETENTION_DAYS` | 7 | 1–90 days |
-| `CONVERSATION_LOG_MAX_BYTES` | 2097152 | 64 KiB–8 MiB, each direction |
+| `CONVERSATION_LOG_MODE` | session | `session` (default) or `full` (legacy per-request rollback) |
+| `CONVERSATION_LOG_PAYLOAD` | legacy | `legacy` dual-writes old bodies; `off` writes only the session model |
+| `CONVERSATION_RETENTION_DAYS` | 30 | 1–90 days; falls back to `CONVERSATION_LOG_RETENTION_DAYS` |
+| `CONVERSATION_LOG_RETENTION_DAYS` | 30 | 1–90 days (legacy alias) |
+| `CONVERSATION_LOG_MAX_BYTES` | 2097152 | 64 KiB–8 MiB, legacy body capture each direction |
+| `CONVERSATION_LOG_PARSE_MAX_BYTES` | 33554432 | 64 KiB–128 MiB, request parse budget (session mode) |
+| `CONVERSATION_RESPONSE_SAFETY_BYTES` | 16777216 | 1–64 MiB, response byte safety cap (session mode) |
+| `CONVERSATION_TEXT_MAX_BYTES` | 65536 | 1 KiB–1 MiB, stored per-message text cap |
+| `CONVERSATION_LOG_MAX_INFLIGHT` | 128 | 8–1024 concurrent capture slots |
+| `CONVERSATION_LOG_QUEUE_SIZE` | 256 | 16–4096 asynchronous write queue |
 
 Expired records disappear from queries immediately and are deleted hourly.
 Existing authentication audit retention is unchanged. Database backups may keep
 expired contents until their own rotation completes. Gzip is compression, not
 encryption; database and backup access must remain restricted.
 
-There are 32 concurrent capture slots and a 16-item asynchronous write queue.
-Overload, process termination or database failures may lose records without
-blocking inference. Server logs contain failure counts and request IDs, never
-the captured bodies. This is operational request history, not a zero-loss audit
-system or a conversation memory service.
+There are 128 concurrent capture slots and a 256-item asynchronous write queue
+(both configurable). Overload, process termination or database failures may lose
+records without blocking inference; graceful shutdown drains the queue so planned
+restarts do not lose captured turns. Server logs contain failure counts and
+request IDs, never the captured bodies. This is operational request history, not
+a zero-loss audit system or a conversation memory service.
 
 Attachments, binary payloads, authentication fields and encrypted reasoning are
 omitted. Free text and tool arguments may still contain business-sensitive text
@@ -57,6 +66,49 @@ Native Claude/Gemini, compaction, realtime/audio/image/task endpoints and traffi
 forwarded by a separate Nginx upstream are outside this version's scope. An ID
 reference to earlier upstream context cannot reconstruct that context. Captures
 become visible after a request/turn ends; historical bodies cannot be recovered.
+
+## Session audit model (default)
+
+`CONVERSATION_LOG_MODE=session` converges per-request records into one timeline
+per conversation. Three tables in the primary database:
+
+- `conversation_sessions` — metadata skeleton (user, token, model, source,
+  counts, `updated_at`). No bodies.
+- `conversation_messages` — append-only visible utterances. Each user message
+  and each assistant text is stored once; `request_id` provides provenance.
+  Tool/skill/command execution details and reasoning are never stored; only a
+  per-request `tool_calls` count remains for reading-view dividers.
+- `conversation_logs` — the request ledger. In session mode `payload` is NULL
+  once `CONVERSATION_LOG_PAYLOAD=off`; metadata, outcome and counts remain.
+
+Session identity is deterministic, never text similarity or time proximity:
+explicit client identifiers (`prompt_cache_key`, `session_id`, `conversation_id`,
+`metadata.user_id`), then Responses `previous_response_id` links, then a
+positional user-message hash prefix chain within the same user+token. A diverging
+history (compaction/edit/branch) starts a child session linked to its parent;
+old messages are never rewritten. User-role items that look like injected IDE
+context are stored but labelled `kind=context` and collapsed in the UI.
+
+Request parsing is separated from storage: the body is parsed up to
+`CONVERSATION_LOG_PARSE_MAX_BYTES` but only extracted text is kept, so oversized
+requests no longer lose the user message. Responses are parsed incrementally
+(SSE/WS line events), keeping memory O(visible text); reasoning deltas never
+enter the text budget. A turn whose request side is unrecoverable but whose
+assistant text survives is kept in a per-user `source=residual` catch-all session
+rather than dropped.
+
+Root-session-only endpoints (PAT denied, `no-store`):
+`GET /api/conversations/sessions`, `GET /api/conversations/sessions/:id`
+(paginated messages + ledger; opening writes a `conversation.session_view` audit
+event), `GET /api/conversations/messages/search` (escaped LIKE),
+`GET /api/conversations/requests/:request_id` (ledger metadata). The legacy
+`/api/conversation/:request_id[/thread]` body endpoints remain for retained legacy
+payloads during the dual-write transition.
+
+On startup a mutex-serialized, idempotent backfill maps retained legacy payload
+rows into the session model (state markers `linked`/`unassigned`/`error`); it never
+rewrites legacy bodies and resumes safely after interruption. Retention cleanup
+cascades sessions → messages and expires the ledger by `created_at`.
 
 ## Validation
 

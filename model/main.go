@@ -377,6 +377,8 @@ func migrateDB() error {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&ConversationLog{},
+		&ConversationSession{},
+		&ConversationMessage{},
 	)
 	if err != nil {
 		return err

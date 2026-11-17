@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageSquare,
+  MessagesSquare,
   PlugZap,
   Radio,
   ServerCog,
@@ -146,6 +147,12 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Users'),
             url: '/users',
             icon: Users,
+          },
+          {
+            title: t('Conversation Audit'),
+            url: '/conversation-sessions',
+            icon: MessagesSquare,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Redemption Codes'),

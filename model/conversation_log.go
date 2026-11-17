@@ -31,6 +31,11 @@ type ConversationLog struct {
 	Outcome            string `json:"outcome" gorm:"type:varchar(32)"`
 	Truncated          bool   `json:"truncated"`
 	Payload            []byte `json:"-" gorm:"size:16777216"`
+	SessionKey         string `json:"session_key" gorm:"type:varchar(96);index"`
+	SessionState       string `json:"session_state" gorm:"type:varchar(16);index"`
+	NewUserMessages    int    `json:"new_user_messages"`
+	AssistantTextChars int    `json:"assistant_text_chars"`
+	ToolCalls          int    `json:"tool_calls"`
 }
 
 type ConversationContent struct {
@@ -40,21 +45,28 @@ type ConversationContent struct {
 	Output      string `json:"output"`
 }
 
+func compressConversationPayload(encoded []byte) []byte {
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(encoded); err != nil {
+		return nil
+	}
+	if err := writer.Close(); err != nil {
+		return nil
+	}
+	return compressed.Bytes()
+}
+
 func StoreConversation(entry *ConversationLog, content ConversationContent, audit AuditLog) error {
 	conversationLinks(entry, content)
 	encoded, err := common.Marshal(content)
 	if err != nil {
 		return err
 	}
-	var compressed bytes.Buffer
-	writer := gzip.NewWriter(&compressed)
-	if _, err = writer.Write(encoded); err != nil {
-		return err
+	entry.Payload = compressConversationPayload(encoded)
+	if entry.Payload == nil {
+		return gorm.ErrInvalidData
 	}
-	if err = writer.Close(); err != nil {
-		return err
-	}
-	entry.Payload = compressed.Bytes()
 	if err = DB.Session(&gorm.Session{Logger: gormlogger.Default.LogMode(gormlogger.Silent)}).Create(entry).Error; err != nil {
 		return err
 	}
@@ -271,6 +283,9 @@ func CleanupConversations(cutoff int64) error {
 	if err := DB.Where("created_at < ?", cutoff).Delete(&ConversationLog{}).Error; err != nil {
 		return err
 	}
+	if err := CleanupConversationSessions(cutoff); err != nil {
+		return err
+	}
 	// Only this new category expires; authentication audit retention is unchanged.
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return LOG_DB.Exec("ALTER TABLE audit_logs DELETE WHERE category = ? AND created_at < ? SETTINGS mutations_sync = 1", AuditCategoryConversation, cutoff).Error
@@ -279,6 +294,10 @@ func CleanupConversations(cutoff int64) error {
 }
 
 func ConversationCutoff() int64 {
-	days := min(max(common.GetEnvOrDefault("CONVERSATION_LOG_RETENTION_DAYS", 7), 1), 90)
+	days := common.GetEnvOrDefault("CONVERSATION_RETENTION_DAYS", 0)
+	if days == 0 {
+		days = common.GetEnvOrDefault("CONVERSATION_LOG_RETENTION_DAYS", 30)
+	}
+	days = min(max(days, 1), 90)
 	return time.Now().Add(-time.Duration(days) * 24 * time.Hour).Unix()
 }
