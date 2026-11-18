@@ -48,6 +48,16 @@ func GetConversationSessions(c *gin.Context) {
 	if !conversationRootSession(c) {
 		return
 	}
+	if service.ConversationQAMode() {
+		c.Header("Cache-Control", "no-store")
+		qaList(c, "chats")
+		return
+	}
+	if service.ConversationQAMode() {
+		c.Header("Cache-Control", "no-store")
+		qaList(c, "chats")
+		return
+	}
 	page := common.GetPageQuery(c)
 	if page.Page < 1 || page.PageSize < 1 || page.PageSize > 100 {
 		common.ApiErrorMsg(c, "Invalid conversation pagination")
@@ -104,6 +114,11 @@ func GetConversationSessionDetail(c *gin.Context) {
 	if !conversationRootSession(c) {
 		return
 	}
+	if service.ConversationQAMode() {
+		c.Header("Cache-Control", "no-store")
+		qaList(c, "chat")
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id < 1 {
 		common.ApiErrorMsg(c, "Invalid conversation session")
@@ -137,13 +152,18 @@ func GetConversationSessionDetail(c *gin.Context) {
 	model.RecordAuditLog(c, model.AuditLog{
 		UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
 		Category: model.AuditCategoryConversation, Action: "conversation.session_view",
-		Content: "Conversation session · #" + strconv.FormatInt(id, 10), Success: true,
+		Content: "Conversation session 路 #" + strconv.FormatInt(id, 10), Success: true,
 	})
 	common.ApiSuccess(c, gin.H{"session": session, "messages": messages, "ledger": ledger, "has_more": hasMore})
 }
 
 func SearchConversationMessages(c *gin.Context) {
 	if !conversationRootSession(c) {
+		return
+	}
+	if service.ConversationQAMode() {
+		c.Header("Cache-Control", "no-store")
+		qaList(c, "search")
 		return
 	}
 	keyword := strings.TrimSpace(c.Query("q"))
@@ -185,6 +205,11 @@ func GetConversationRequest(c *gin.Context) {
 	if !conversationRootSession(c) {
 		return
 	}
+	if service.ConversationQAMode() {
+		c.Header("Cache-Control", "no-store")
+		qaRequestView(c)
+		return
+	}
 	entry, err := model.GetConversationRequest(c.Param("request_id"))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.AbortWithStatus(http.StatusNotFound)
@@ -201,6 +226,11 @@ func GetConversation(c *gin.Context) {
 	// Content requires a live root dashboard session, never an API/PAT token.
 	if _, ok := middleware.GetSessionAuthIdentity(c); !ok || c.GetInt("role") != common.RoleRootUser {
 		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	if service.ConversationQAMode() {
+		c.Header("Cache-Control", "no-store")
+		qaRequestView(c)
 		return
 	}
 	entry, content, err := model.GetConversation(c.Param("request_id"), model.ConversationCutoff())
@@ -223,6 +253,11 @@ func GetConversation(c *gin.Context) {
 func GetConversationThread(c *gin.Context) {
 	if _, ok := middleware.GetSessionAuthIdentity(c); !ok || c.GetInt("role") != common.RoleRootUser {
 		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+	if service.ConversationQAMode() {
+		c.Header("Cache-Control", "no-store")
+		qaRequestView(c)
 		return
 	}
 	thread, err := model.GetConversationThread(c.Param("request_id"), model.ConversationCutoff())

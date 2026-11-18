@@ -15,6 +15,16 @@ func requestHeading(line string) bool {
 // Split only structural wrappers at the start of a content part; prose and
 // quotations (including fenced examples) are never searched for bare tokens.
 func ConversationInputParts(raw string) []ConversationUserItem {
+	return conversationInputParts(raw, false)
+}
+
+// ConversationQAParts retains whitespace inside a verified user boundary.
+func ConversationQAParts(raw string) []ConversationUserItem { return conversationInputParts(raw, true) }
+func conversationInputParts(raw string, exact bool) []ConversationUserItem {
+	userSegment := strings.TrimSpace
+	if exact {
+		userSegment = func(s string) string { return s }
+	}
 	var parts []ConversationUserItem
 	add := func(kind, text string) {
 		if strings.TrimSpace(text) != "" {
@@ -23,6 +33,9 @@ func ConversationInputParts(raw string) []ConversationUserItem {
 	}
 	for rest := raw; strings.TrimSpace(rest) != ""; {
 		trimmed := strings.TrimSpace(rest)
+		if exact {
+			trimmed = strings.TrimLeft(rest, " \r\n\t")
+		}
 		first, _, _ := strings.Cut(trimmed, "\n")
 		lower := strings.ToLower(strings.TrimSpace(first))
 		if strings.HasPrefix(lower, "# agents.md instructions for ") {
@@ -73,7 +86,7 @@ func ConversationInputParts(raw string) []ConversationUserItem {
 					}
 				} else if fence == "" && requestHeading(clean) {
 					add("context", trimmed[:offset+len(line)])
-					add("text", strings.TrimSpace(trimmed[offset+len(line):]))
+					add("text", userSegment(trimmed[offset+len(line):]))
 					found = true
 					break
 				}
@@ -88,7 +101,7 @@ func ConversationInputParts(raw string) []ConversationUserItem {
 			_, after, ok := strings.Cut(trimmed, "\n")
 			if ok {
 				add("context", first)
-				add("text", strings.TrimSpace(after))
+				add("text", userSegment(after))
 				break
 			}
 		}

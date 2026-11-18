@@ -24,6 +24,8 @@ import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { QARequest } from '@/features/conversation-sessions/components/qa-reader'
+import { useStatus } from '@/hooks/use-status'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -154,14 +156,13 @@ function ConversationBody(props: { entry: AuditLog }) {
 export function ConversationDetailsDialog(props: { entry: AuditLog }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const { status } = useStatus()
   return (
     <Dialog
       open={open}
       onOpenChange={setOpen}
       title={t('Conversation details')}
-      description={t(
-        'Recorded text only. Attachments and encrypted reasoning are omitted. Records expire after the configured retention period.'
-      )}
+      description={t('User prompt and final reply')}
       trigger={
         <Button variant='ghost' size='sm' className='h-7 px-2'>
           {t('Details')}
@@ -170,7 +171,12 @@ export function ConversationDetailsDialog(props: { entry: AuditLog }) {
       contentClassName='sm:max-w-4xl'
       bodyClassName='space-y-4'
     >
-      {open && <ConversationBody entry={props.entry} />}
+      {open &&
+        (status?.conversation_qa === false ? (
+          <ConversationBody entry={props.entry} />
+        ) : (
+          <QARequest requestId={props.entry.request_id} />
+        ))}
     </Dialog>
   )
 }

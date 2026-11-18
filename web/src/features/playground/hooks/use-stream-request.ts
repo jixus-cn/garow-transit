@@ -72,7 +72,8 @@ export function createStreamRequestController(
 
   const send = async (
     payload: ChatCompletionRequest,
-    callbacks: StreamRequestCallbacks
+    callbacks: StreamRequestCallbacks,
+    extraHeaders: Record<string, string> = {}
   ) => {
     const requestGeneration = generation + 1
     generation = requestGeneration
@@ -95,7 +96,10 @@ export function createStreamRequestController(
     }
     if (generation !== requestGeneration) return
 
-    const nextSource = runtime.createSource(payload, headers)
+    const nextSource = runtime.createSource(payload, {
+      ...headers,
+      ...extraHeaders,
+    })
     source = nextSource
     runtime.setStreaming(true)
     let completed = false
@@ -206,13 +210,18 @@ export function useStreamRequest() {
       payload: ChatCompletionRequest,
       onUpdate: (type: 'reasoning' | 'content', chunk: string) => void,
       onComplete: () => void,
-      onError: (error: string, errorCode?: string) => void
+      onError: (error: string, errorCode?: string) => void,
+      extraHeaders?: Record<string, string>
     ) =>
-      controllerRef.current?.send(payload, {
-        onUpdate,
-        onComplete,
-        onError,
-      }),
+      controllerRef.current?.send(
+        payload,
+        {
+          onUpdate,
+          onComplete,
+          onError,
+        },
+        extraHeaders
+      ),
     []
   )
 

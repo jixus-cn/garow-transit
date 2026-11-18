@@ -377,6 +377,7 @@ func migrateDB() error {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&ConversationLog{},
+		&QATurn{}, &QAReceipt{}, &QAEdge{},
 		&ConversationSession{},
 		&ConversationMessage{},
 	)

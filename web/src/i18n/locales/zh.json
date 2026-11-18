@@ -7536,6 +7536,14 @@
     "Client-submitted text": "客户端提交的用户文本",
     "Capture time": "采集时间",
     "Protocol item / part": "协议条目 / 文本块",
-    "Show unattributed fragments": "显示未归属片段"
+    "Show unattributed fragments": "显示未归属片段",
+    "Exchanges": "问答轮数",
+    "User prompt": "用户提示词",
+    "No confirmed final reply": "未收到可确认的最终回复",
+    "No verified user prompt": "未找到可确认的用户提问",
+    "Unassigned exchanges": "未归属问答",
+    "Search prompts and replies": "搜索提示词和最终回复",
+    "User prompt and final reply": "用户提示词与模型最终回复",
+    "Load more": "加载更多"
   }
 }

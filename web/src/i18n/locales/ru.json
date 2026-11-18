@@ -7536,6 +7536,14 @@
     "Client-submitted text": "Текст пользователя, переданный клиентом",
     "Capture time": "Время записи",
     "Protocol item / part": "Элемент протокола / часть",
-    "Show unattributed fragments": "Показать непривязанные фрагменты"
+    "Show unattributed fragments": "Показать непривязанные фрагменты",
+    "Exchanges": "Число обменов",
+    "User prompt": "Запрос пользователя",
+    "No confirmed final reply": "Итоговый ответ не подтверждён",
+    "No verified user prompt": "Подтверждённый запрос не найден",
+    "Unassigned exchanges": "Обмены без привязки к чату",
+    "Search prompts and replies": "Поиск по запросам и итоговым ответам",
+    "User prompt and final reply": "Запрос и итоговый ответ",
+    "Load more": "Загрузить ещё"
   }
 }

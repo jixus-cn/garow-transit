@@ -29,6 +29,8 @@ export interface MessageVersion {
 }
 
 export interface Message {
+  chatId?: string
+  submissionId?: string
   key: string
   from: MessageRole
   versions: MessageVersion[]

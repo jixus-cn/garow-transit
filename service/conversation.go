@@ -18,6 +18,7 @@ import (
 const conversationContextKey = "garow_conversation_capture"
 
 type conversationWrite struct {
+	qa            *model.QAFacts
 	entry         model.ConversationLog
 	content       model.ConversationContent
 	audit         model.AuditLog
@@ -40,11 +41,19 @@ func ConversationLoggingEnabled() bool { return os.Getenv("CONVERSATION_LOG_ENAB
 func StartConversationRecorder() {
 	conversationStart.Do(func() {
 		go func() {
-			if err := model.BackfillConversationLinks(); err != nil {
-				common.SysError("conversation link backfill failed")
-			}
-			if ConversationSessionMode() {
-				go BackfillConversationSessions()
+			if ConversationQAMode() {
+				go func() {
+					if _, err := BackfillQA(); err != nil {
+						common.SysError("conversation QA backfill failed; unfinished receipts will retry")
+					}
+				}()
+			} else {
+				if err := model.BackfillConversationLinks(); err != nil {
+					common.SysError("conversation link backfill failed")
+				}
+				if ConversationSessionMode() {
+					go BackfillConversationSessions()
+				}
 			}
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
@@ -60,7 +69,9 @@ func StartConversationRecorder() {
 						item.audit.Username = "user#" + common.Interface2String(item.entry.UserId)
 					}
 					var err error
-					if item.extraction != nil {
+					if item.qa != nil {
+						err = model.StoreQA(&item.entry, *item.qa, false, item.audit, model.ConversationCutoff())
+					} else if item.extraction != nil {
 						var legacy *model.ConversationContent
 						if item.legacy {
 							legacy = &item.content
@@ -74,6 +85,13 @@ func StartConversationRecorder() {
 						common.SysError("conversation persistence failed; request_id=" + item.entry.RequestId)
 					}
 				case <-ticker.C:
+					if ConversationQAMode() {
+						go func() {
+							if _, err := BackfillQA(); err != nil {
+								common.SysError("conversation QA backfill retry failed")
+							}
+						}()
+					}
 					if err := model.CleanupConversations(model.ConversationCutoff()); err != nil {
 						common.SysError("conversation retention cleanup failed")
 					}
@@ -88,6 +106,7 @@ func StartConversationRecorder() {
 
 // ConversationCapture never owns a Gin context after the request ends.
 type ConversationCapture struct {
+	qa         *qaCapture
 	mu         sync.Mutex
 	entry      model.ConversationLog
 	content    model.ConversationContent
@@ -115,7 +134,7 @@ func BeginConversation(c *gin.Context, protocol string) *ConversationCapture {
 	limit := min(max(common.GetEnvOrDefault("CONVERSATION_LOG_MAX_BYTES", 2<<20), 64<<10), 8<<20)
 	r := &ConversationCapture{limit: limit}
 	r.session = ConversationSessionMode()
-	r.legacy = r.session && conversationLegacyPayload()
+	r.legacy = r.session && !ConversationQAMode() && conversationLegacyPayload()
 	r.textMax = conversationTextMax()
 	if r.session {
 		r.agg.cap = conversationSafetyBytes()
@@ -130,6 +149,9 @@ func BeginConversation(c *gin.Context, protocol string) *ConversationCapture {
 		r.entry.RequestId = common.NewRequestId()
 	}
 	r.audit = model.AuditLog{RequestId: r.entry.RequestId, EventId: r.entry.RequestId, UserId: r.entry.UserId, Username: c.GetString("username"), CreatedAt: r.entry.CreatedAt, Category: model.AuditCategoryConversation, Action: "conversation.record", Ip: c.ClientIP(), Method: c.Request.Method, Route: c.Request.URL.Path, AuthMethod: "api_key"}
+	if ConversationQAMode() {
+		r.qa = &qaCapture{facts: model.QAFacts{Missing: true}, limit: conversationSafetyBytes(), ws: protocol == "websocket"}
+	}
 	storage, err := common.GetBodyStorage(c)
 	if err == nil {
 		readMax := limit
@@ -143,7 +165,17 @@ func BeginConversation(c *gin.Context, protocol string) *ConversationCapture {
 		if seekErr != nil {
 			err = seekErr
 		}
-		if r.session {
+		if r.qa != nil {
+			if len(body) > readMax {
+				r.entry.Truncated = true
+			} else if err == nil {
+				var request map[string]any
+				if common.Unmarshal(body, &request) == nil {
+					r.qa.facts = qaRequest(request, c.Request.Header, c.Request.URL.Path, r.entry.Kind)
+					r.entry.Model, _ = request["model"].(string)
+				}
+			}
+		} else if r.session {
 			r.extraction.Placeholder = true
 			if len(body) > readMax {
 				r.entry.Truncated = true
@@ -228,6 +260,10 @@ func (r *ConversationCapture) Observe(data []byte) {
 	if r.finished {
 		return
 	}
+	if r.qa != nil {
+		r.qa.write(data)
+		return
+	}
 	if r.session {
 		r.observeSessionData(data)
 		return
@@ -251,6 +287,33 @@ func (r *ConversationCapture) Finish(status int, cancelled bool) {
 	}
 	r.finished = true
 	defer func() { <-conversationSlots }()
+	if r.qa != nil {
+		r.qa.finishWire()
+		ok := status >= 200 && status < 300 && !cancelled && !r.entry.Truncated
+		r.qa.result(&r.qa.facts, ok)
+		r.entry.Truncated = r.entry.Truncated || r.qa.overflow
+		r.entry.Outcome = "incomplete"
+		if r.qa.terminal && ok && !r.qa.failed && !r.qa.overflow {
+			r.entry.Outcome = "completed"
+		}
+		if cancelled {
+			r.entry.Outcome = "interrupted"
+		}
+		if status >= 400 || r.qa.failed {
+			r.entry.Outcome = "failed"
+		}
+		r.audit.Status = status
+		r.audit.Success = r.entry.Outcome == "completed"
+		r.audit.Content = "Conversation"
+		r.audit.ActorRole = common.RoleCommonUser
+		facts := r.qa.facts
+		select {
+		case conversationQueue <- conversationWrite{entry: r.entry, audit: r.audit, qa: &facts}:
+		default:
+			conversationDropped.Add(1)
+		}
+		return
+	}
 	if r.session {
 		output, final := r.finishSessionAggregation()
 		if r.entry.Outcome == "" {

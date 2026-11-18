@@ -7536,6 +7536,14 @@
     "Client-submitted text": "用戶端提交的使用者文字",
     "Capture time": "擷取時間",
     "Protocol item / part": "協定項目 / 文字區塊",
-    "Show unattributed fragments": "顯示未歸屬片段"
+    "Show unattributed fragments": "顯示未歸屬片段",
+    "Exchanges": "問答輪數",
+    "User prompt": "使用者提示詞",
+    "No confirmed final reply": "尚未收到可確認的最終回覆",
+    "No verified user prompt": "找不到可確認的使用者提問",
+    "Unassigned exchanges": "未歸屬問答",
+    "Search prompts and replies": "搜尋提示詞與最終回覆",
+    "User prompt and final reply": "使用者提示詞與模型最終回覆",
+    "Load more": "載入更多"
   }
 }

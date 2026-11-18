@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { nanoid } from 'nanoid'
+
 import { MESSAGE_ROLES } from '../../constants'
 /*
 Copyright (C) 2023-2026 QuantumNous
@@ -60,10 +62,16 @@ export function appendUserMessagePair(
 ): Message[] {
   const submittedAt = Date.now()
 
+  const chatId =
+    messages.find((m) => m.chatId)?.chatId ?? messages[0]?.key ?? nanoid()
   return [
     ...messages,
-    createUserMessage(content, submittedAt),
-    createLoadingAssistantMessage(submittedAt),
+    {
+      ...createUserMessage(content, submittedAt),
+      chatId,
+      submissionId: nanoid(),
+    },
+    { ...createLoadingAssistantMessage(submittedAt), chatId },
   ]
 }
 
@@ -128,6 +136,7 @@ export function applyMessageEdit(
     message.key === messageKey
       ? {
           ...updateCurrentVersionContent(message, content),
+          submissionId: shouldSubmit ? nanoid() : message.submissionId,
           createdAt: shouldSubmit ? submittedAt : message.createdAt,
         }
       : message

@@ -7536,6 +7536,14 @@
     "Client-submitted text": "Texte utilisateur transmis par le client",
     "Capture time": "Heure de capture",
     "Protocol item / part": "Élément du protocole / partie",
-    "Show unattributed fragments": "Afficher les fragments non attribués"
+    "Show unattributed fragments": "Afficher les fragments non attribués",
+    "Exchanges": "Échanges",
+    "User prompt": "Message de l’utilisateur",
+    "No confirmed final reply": "Aucune réponse finale confirmée",
+    "No verified user prompt": "Aucune demande confirmée",
+    "Unassigned exchanges": "Échanges sans conversation identifiée",
+    "Search prompts and replies": "Rechercher dans les demandes et les réponses finales",
+    "User prompt and final reply": "Demande et réponse finale",
+    "Load more": "Charger la suite"
   }
 }

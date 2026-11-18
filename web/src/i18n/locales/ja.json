@@ -7536,6 +7536,14 @@
     "Client-submitted text": "クライアントが送信したユーザーテキスト",
     "Capture time": "記録時刻",
     "Protocol item / part": "プロトコル項目 / パート",
-    "Show unattributed fragments": "帰属不明の断片を表示"
+    "Show unattributed fragments": "帰属不明の断片を表示",
+    "Exchanges": "やり取りの数",
+    "User prompt": "ユーザーの入力",
+    "No confirmed final reply": "確認できる最終回答はありません",
+    "No verified user prompt": "確認できるユーザーの入力がありません",
+    "Unassigned exchanges": "会話が特定できないやり取り",
+    "Search prompts and replies": "入力と最終回答を検索",
+    "User prompt and final reply": "ユーザーの入力と最終回答",
+    "Load more": "さらに読み込む"
   }
 }

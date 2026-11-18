@@ -35,6 +35,8 @@ func ConversationRecording() gin.HandlerFunc {
 			return
 		}
 		r := service.BeginConversation(c, "http")
+		c.Request.Header.Del("X-Garow-Chat-Id")
+		c.Request.Header.Del("X-Garow-Submission-Id")
 		if r == nil {
 			c.Next()
 			return

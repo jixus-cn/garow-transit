@@ -7536,6 +7536,14 @@
     "Client-submitted text": "Client-submitted text",
     "Capture time": "Capture time",
     "Protocol item / part": "Protocol item / part",
-    "Show unattributed fragments": "Show unattributed fragments"
+    "Show unattributed fragments": "Show unattributed fragments",
+    "Exchanges": "Exchanges",
+    "User prompt": "User prompt",
+    "No confirmed final reply": "No confirmed final reply",
+    "No verified user prompt": "No verified user prompt",
+    "Unassigned exchanges": "Unassigned exchanges",
+    "Search prompts and replies": "Search prompts and replies",
+    "User prompt and final reply": "User prompt and final reply",
+    "Load more": "Load more"
   }
 }

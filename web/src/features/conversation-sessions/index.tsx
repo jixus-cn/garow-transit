@@ -24,19 +24,29 @@ import { DataTablePage, useDataTable } from '@/components/data-table'
 import { SectionPageLayout } from '@/components/layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { useStatus } from '@/hooks/use-status'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getConversationSessions, type SessionFilters } from './api'
-import { SessionFilterBar } from './components/session-filter-bar'
 import { useSessionColumns } from './components/session-columns'
+import { SessionFilterBar } from './components/session-filter-bar'
+import { QAIndex } from './qa-index'
 
 const EMPTY_SESSIONS: never[] = []
 
 export function ConversationSessions() {
+  const { status } = useStatus()
+  return status?.conversation_qa === false ? <LegacySessions /> : <QAIndex />
+}
+
+function LegacySessions() {
   const { t } = useTranslation()
   const userId = useAuthStore((state) => state.auth.user?.id)
-  const [filters, setFilters] = useState<SessionFilters>({ p: 1, page_size: 20 })
+  const [filters, setFilters] = useState<SessionFilters>({
+    p: 1,
+    page_size: 20,
+  })
   const invalidRange =
     filters.start_timestamp !== undefined &&
     filters.end_timestamp !== undefined &&
@@ -51,7 +61,9 @@ export function ConversationSessions() {
   const columns = useSessionColumns()
   const { table } = useDataTable({
     columns,
-    data: query.isError ? EMPTY_SESSIONS : (query.data?.items ?? EMPTY_SESSIONS),
+    data: query.isError
+      ? EMPTY_SESSIONS
+      : (query.data?.items ?? EMPTY_SESSIONS),
     getRowId: (entry) => String(entry.id),
     totalCount: query.isError ? 0 : (query.data?.total ?? 0),
     pagination: { pageIndex: filters.p - 1, pageSize: filters.page_size },
@@ -80,7 +92,9 @@ export function ConversationSessions() {
 
   return (
     <SectionPageLayout fixedContent>
-      <SectionPageLayout.Title>{t('Conversation Audit')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        {t('Conversation Audit')}
+      </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='flex h-full min-h-0 flex-col'>
           <DataTablePage
@@ -89,7 +103,9 @@ export function ConversationSessions() {
             isLoading={query.isPending && !invalidRange}
             isFetching={query.isFetching}
             emptyTitle={
-              query.isError ? t('Failed to load conversations') : t('No records')
+              query.isError
+                ? t('Failed to load conversations')
+                : t('No records')
             }
             paginationInFooter
             className='h-auto min-h-0 flex-1'

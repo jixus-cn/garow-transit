@@ -44,6 +44,17 @@ interface UseChatHandlerOptions {
   onMessageUpdate: (updater: (prev: Message[]) => Message[]) => void
 }
 
+function auditHeaders(messages: Message[]): Record<string, string> {
+  const user = [...messages]
+    .reverse()
+    .find((message) => message.from === 'user')
+  if (!user) return {}
+  return {
+    'X-Garow-Chat-Id': user.chatId ?? messages[0].key,
+    'X-Garow-Submission-Id': user.submissionId ?? user.key,
+  }
+}
+
 const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
 const STREAM_UPDATE_FLUSH_MS = 50
 
@@ -259,7 +270,8 @@ export function useChatHandler({
         payload,
         (type, chunk) => handleStreamUpdate(generation, type, chunk),
         () => handleStreamComplete(generation),
-        (error, errorCode) => handleStreamError(generation, error, errorCode)
+        (error, errorCode) => handleStreamError(generation, error, errorCode),
+        auditHeaders(messages)
       )
     },
     [
@@ -294,7 +306,8 @@ export function useChatHandler({
         setIsRequesting(true)
         const response = await sendChatCompletion(
           payload,
-          abortController.signal
+          abortController.signal,
+          auditHeaders(messages)
         )
         if (
           abortController.signal.aborted ||

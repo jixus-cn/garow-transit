@@ -282,16 +282,16 @@ func GetConversation(requestId string, cutoff int64) (*ConversationLog, *Convers
 	}
 	reader, err := gzip.NewReader(bytes.NewReader(entry.Payload))
 	if err != nil {
-		return nil, nil, err
+		return &entry, nil, err
 	}
 	defer reader.Close()
 	encoded, err := io.ReadAll(io.LimitReader(reader, 40<<20))
 	if err != nil {
-		return nil, nil, err
+		return &entry, nil, err
 	}
 	var content ConversationContent
 	if err = common.Unmarshal(encoded, &content); err != nil {
-		return nil, nil, err
+		return &entry, nil, err
 	}
 	return &entry, &content, nil
 }
@@ -299,6 +299,22 @@ func GetConversation(requestId string, cutoff int64) (*ConversationLog, *Convers
 func CleanupConversations(cutoff int64) error {
 	if err := DB.Where("created_at < ?", cutoff).Delete(&ConversationLog{}).Error; err != nil {
 		return err
+	}
+	if DB.Migrator().HasTable(&QATurn{}) {
+		expired := DB.Model(&QATurn{}).Select("id").Where("created_at < ?", cutoff)
+		if err := DB.Model(&QAReceipt{}).Where("turn_id IN (?)", expired).Updates(map[string]any{"turn_id": 0, "state": "expired"}).Error; err != nil {
+			return err
+		}
+		if err := DB.Where("turn_id IN (?)", expired).Delete(&QAEdge{}).Error; err != nil {
+			return err
+		}
+	}
+	for _, table := range []any{&QAEdge{}, &QAReceipt{}, &QATurn{}} {
+		if DB.Migrator().HasTable(table) {
+			if err := DB.Where("created_at < ?", cutoff).Delete(table).Error; err != nil {
+				return err
+			}
+		}
 	}
 	if err := CleanupConversationSessions(cutoff); err != nil {
 		return err

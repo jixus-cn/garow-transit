@@ -16,10 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, Navigate, redirect } from '@tanstack/react-router'
 
 import { SectionPageLayout } from '@/components/layout'
+import { QAReader } from '@/features/conversation-sessions/components/qa-reader'
 import { SessionReader } from '@/features/conversation-sessions/components/session-reader'
+import { useStatus } from '@/hooks/use-status'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -31,7 +33,7 @@ export const Route = createFileRoute(
     if (auth.user?.role !== ROLE.SUPER_ADMIN) {
       throw redirect({ to: '/403' })
     }
-    if (!Number.isInteger(Number(params.sessionId))) {
+    if (!/^(?:[a-f0-9]{64}|[1-9][0-9]{0,17})$/.test(params.sessionId)) {
       throw redirect({ to: '/conversation-sessions' })
     }
   },
@@ -43,8 +45,20 @@ function SessionReaderPage() {
   return (
     <SectionPageLayout fixedContent>
       <SectionPageLayout.Content>
-        <SessionReader sessionId={Number(sessionId)} />
+        {sessionId.length === 64 ? (
+          <QAReader chat={sessionId} />
+        ) : (
+          <LegacyReader id={sessionId} />
+        )}
       </SectionPageLayout.Content>
     </SectionPageLayout>
+  )
+}
+function LegacyReader(props: { id: string }) {
+  const { status } = useStatus()
+  return status?.conversation_qa === false ? (
+    <SessionReader sessionId={Number(props.id)} />
+  ) : (
+    <Navigate to='/conversation-sessions' />
   )
 }

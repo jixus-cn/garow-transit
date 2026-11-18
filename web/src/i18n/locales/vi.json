@@ -7536,6 +7536,14 @@
     "Client-submitted text": "Văn bản người dùng do ứng dụng gửi",
     "Capture time": "Thời điểm ghi nhận",
     "Protocol item / part": "Mục giao thức / phần",
-    "Show unattributed fragments": "Hiện các phần chưa xác định hội thoại"
+    "Show unattributed fragments": "Hiện các phần chưa xác định hội thoại",
+    "Exchanges": "Số lượt trao đổi",
+    "User prompt": "Lời nhắc của người dùng",
+    "No confirmed final reply": "Chưa xác nhận được câu trả lời cuối cùng",
+    "No verified user prompt": "Không tìm thấy lời nhắc đã xác nhận",
+    "Unassigned exchanges": "Lượt trao đổi chưa xác định cuộc trò chuyện",
+    "Search prompts and replies": "Tìm lời nhắc và câu trả lời cuối cùng",
+    "User prompt and final reply": "Lời nhắc và câu trả lời cuối cùng",
+    "Load more": "Tải thêm"
   }
 }

@@ -72,6 +72,8 @@ const reasoningSchema = z.object({
 })
 
 const messageSchema = z.object({
+  chatId: z.string().optional(),
+  submissionId: z.string().optional(),
   key: z.string(),
   from: messageRoleSchema,
   versions: z.array(messageVersionSchema).min(1),
