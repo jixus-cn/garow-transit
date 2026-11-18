@@ -52,6 +52,7 @@ export interface Model {
   created_time: number
   updated_time: number
   name_rule: number
+  max_context_tokens?: number
   // Runtime fields
   bound_channels?: BoundChannel[]
   enable_groups?: string[]
@@ -274,6 +275,7 @@ export const modelFormSchema = z.object({
   vendor_id: z.number().optional(),
   endpoints: z.string().default(''),
   name_rule: z.number().min(0).max(3).default(0),
+  max_context_tokens: z.number().min(0).default(0),
   status: z.boolean().default(true),
   sync_official: z.boolean().default(true),
 })

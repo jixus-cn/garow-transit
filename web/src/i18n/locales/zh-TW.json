@@ -7513,6 +7513,9 @@
     "Prefix chain": "前綴鏈",
     "Unattributed fragments": "未歸屬片段",
     "Truncated": "已截斷",
-    "Keyword": "關鍵字"
+    "Keyword": "關鍵字",
+    "Context Limit": "上下文限制",
+    "Max Context Tokens": "最大上下文 Token",
+    "Maximum input context in tokens. Requests exceeding this limit are rejected before reaching upstream. 0 means unlimited.": "最大輸入上下文（token）。超過此限制的請求會在到達上游前被拒絕。0 表示不限制。"
   }
 }

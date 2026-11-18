@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -24,8 +25,9 @@ import (
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
+	maxContext := model.GetModelMaxContextTokens(info.OriginModelName)
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
-	if info.Request != nil && (needSensitiveCheck || constant.CountToken) {
+	if info.Request != nil && (needSensitiveCheck || constant.CountToken || maxContext > 0) {
 		meta = info.Request.GetTokenCountMeta()
 	} else {
 		// Avoid building CombineText when only the pricing quantities are needed.
@@ -50,6 +52,10 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		}
 	}
 
+	if apiErr := EnforceModelContextLimit(c, info, meta); apiErr != nil {
+		return apiErr
+	}
+
 	tokens, err := service.EstimateRequestToken(c, meta, info)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeCountTokenFailed)
@@ -65,6 +71,27 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		return nil
 	}
 	return service.PreConsumeBilling(c, priceData.QuotaToPreConsume, info)
+}
+
+// EnforceModelContextLimit rejects a request whose counted input exceeds the
+// model's configured maximum context (0 = unlimited). The caller must pass a
+// fully counted meta when a limit is configured. Counting uses CountRequestToken
+// so the cap holds even when billing token estimation is disabled.
+func EnforceModelContextLimit(c *gin.Context, info *relaycommon.RelayInfo, meta *types.TokenCountMeta) *types.NewAPIError {
+	maxContext := model.GetModelMaxContextTokens(info.OriginModelName)
+	if maxContext <= 0 || info.Request == nil || meta == nil {
+		return nil
+	}
+	count, err := service.CountRequestToken(c, meta, info)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeCountTokenFailed)
+	}
+	if count > maxContext {
+		message := fmt.Sprintf("request context %d tokens exceeds the model limit %d", count, maxContext)
+		logger.LogWarn(c, message)
+		return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeContextLengthExceeded, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	return nil
 }
 
 // RefundFailedRequestBilling applies the common final-failure policy after all

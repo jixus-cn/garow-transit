@@ -479,6 +479,46 @@ export function ModelMutateDrawer(props: {
                       />
                     </SideDrawerSection>
 
+                    {/* Context Limit */}
+                    <SideDrawerSection>
+                      <h3 className='text-sm font-semibold'>
+                        {t('Context Limit')}
+                      </h3>
+                      <FormField
+                        control={form.control}
+                        name='max_context_tokens'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('Max Context Tokens')}</FormLabel>
+                            <FormControl>
+                              <Input
+                                type='number'
+                                min={0}
+                                placeholder='0'
+                                value={field.value ?? 0}
+                                onChange={(event) =>
+                                  field.onChange(
+                                    event.target.value === ''
+                                      ? 0
+                                      : Number(event.target.value)
+                                  )
+                                }
+                                onBlur={field.onBlur}
+                                name={field.name}
+                                ref={field.ref}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              {t(
+                                'Maximum input context in tokens. Requests exceeding this limit are rejected before reaching upstream. 0 means unlimited.'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </SideDrawerSection>
+
                     {/* Endpoints Configuration */}
                     <SideDrawerSection>
                       <div className='flex items-center justify-between'>

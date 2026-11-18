@@ -72,8 +72,26 @@ var (
 
 var (
 	modelSupportEndpointTypes = make(map[string][]constant.EndpointType)
+	modelMaxContextRecords    []Model
 	modelSupportEndpointsLock = sync.RWMutex{}
 )
+
+// GetModelMaxContextTokens returns the configured maximum input context for a
+// concrete model name (0 = unlimited). Resolved with catalog name-rule precedence
+// (exact > prefix > suffix > contains) and refreshed alongside pricing on edits.
+func GetModelMaxContextTokens(name string) int {
+	modelSupportEndpointsLock.RLock()
+	records := modelMaxContextRecords
+	modelSupportEndpointsLock.RUnlock()
+	if len(records) == 0 {
+		return 0
+	}
+	resolved := resolveModelMetadata(records, []string{name})
+	if meta, ok := resolved[name]; ok {
+		return meta.MaxContextTokens
+	}
+	return 0
+}
 
 func GetPricing() []Pricing {
 	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
@@ -204,6 +222,14 @@ func updatePricing() {
 		names = append(names, ability.Model)
 	}
 	metaMap := resolveModelMetadata(allMeta, names)
+
+	var limitRecords []Model
+	for i := range allMeta {
+		if allMeta[i].MaxContextTokens > 0 {
+			limitRecords = append(limitRecords, allMeta[i])
+		}
+	}
+	modelMaxContextRecords = limitRecords
 
 	// 预加载供应商
 	var vendors []Vendor

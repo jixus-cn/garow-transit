@@ -7513,6 +7513,9 @@
     "Prefix chain": "Prefix chain",
     "Unattributed fragments": "Unattributed fragments",
     "Truncated": "Truncated",
-    "Keyword": "Keyword"
+    "Keyword": "Keyword",
+    "Context Limit": "Context Limit",
+    "Max Context Tokens": "Max Context Tokens",
+    "Maximum input context in tokens. Requests exceeding this limit are rejected before reaching upstream. 0 means unlimited.": "Maximum input context in tokens. Requests exceeding this limit are rejected before reaching upstream. 0 means unlimited."
   }
 }

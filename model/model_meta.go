@@ -41,6 +41,7 @@ type Model struct {
 	VendorID           int            `json:"vendor_id,omitempty" gorm:"index"`
 	Endpoints          string         `json:"endpoints,omitempty" gorm:"type:text"`
 	SupportedEndpoints []string       `json:"supported_endpoints,omitempty" gorm:"-"`
+	MaxContextTokens   int            `json:"max_context_tokens" gorm:"default:0"`
 	Status             int            `json:"status" gorm:"default:1"`
 	SyncOfficial       int            `json:"sync_official" gorm:"default:1"`
 	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
@@ -265,7 +266,7 @@ func (mi *Model) Update() error {
 		}
 		mi.UpdatedTime = common.GetTimestamp()
 		return tx.Model(&Model{}).Where("id = ?", mi.Id).
-			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time").Updates(mi).Error
+			Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "max_context_tokens", "status", "sync_official", "name_rule", "updated_time").Updates(mi).Error
 	})
 }
 
