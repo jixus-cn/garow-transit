@@ -16,79 +16,80 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { useTranslation } from "react-i18next";
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
 
-import { EmptyState } from "@/components/empty-state";
-import { ErrorState } from "@/components/error-state";
-import { LoadingState } from "@/components/loading-state";
-import { Button } from "@/components/ui/button";
-import { useAuthStore } from "@/stores/auth-store";
+import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
+import { Button } from '@/components/ui/button'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { qaEvidence, type QAFilter } from "../qa-api";
-import { EvidenceList } from "./qa-evidence-list";
+import { qaEvidence, type QAFilter } from '../qa-api'
+import { EvidenceList } from './qa-evidence-list'
 
 export function QAReader(props: {
-  chat?: string;
-  query?: string;
-  filter?: QAFilter;
+  chat?: string
+  query?: string
+  filter?: QAFilter
 }) {
-  const { t } = useTranslation();
-  const user = useAuthStore((s) => s.auth.user?.id);
-  const chat = props.chat ?? "",
-    query = props.query ?? "",
-    filter = props.filter ?? {};
+  const { t } = useTranslation()
+  const user = useAuthStore((s) => s.auth.user?.id)
+  const chat = props.chat ?? '',
+    query = props.query ?? '',
+    filter = props.filter ?? {}
   const q = useInfiniteQuery({
-    queryKey: ["qa-evidence", user, chat, query, filter],
+    queryKey: ['qa-evidence', user, chat, query, filter],
     queryFn: ({ pageParam }) => qaEvidence(chat, query, pageParam, filter),
-    initialPageParam: "",
+    initialPageParam: '',
     getNextPageParam: (p) => p.next_cursor,
     retry: false,
     gcTime: 0,
-  });
-  if (q.isPending) return <LoadingState />;
+  })
+  if (q.isPending) return <LoadingState />
   if (q.isError) {
     return (
       <ErrorState
-        title={t("Failed to load conversation")}
+        title={t('Failed to load conversation')}
         onRetry={() => void q.refetch()}
       />
-    );
+    )
   }
   return (
-    <div className="min-h-0 space-y-4 overflow-auto pb-4">
-      {chat && chat !== "unassigned" && (
+    <div className='min-h-0 space-y-4 overflow-auto pb-4'>
+      {chat && chat !== 'unassigned' && (
         <Button
-          variant="outline"
-          size="sm"
+          variant='outline'
+          size='sm'
           nativeButton={false}
-          render={<Link to="/conversation-sessions" />}
+          render={<Link to='/conversation-sessions' />}
         >
-          {t("Conversation Audit")}
+          {t('Conversation Audit')}
         </Button>
       )}
-      {!q.data.pages[0]?.total && <EmptyState title={t("No records")} />}
+      {!q.data.pages[0]?.total && <EmptyState title={t('No records')} />}
       {q.data.pages.some((p) => p.retention_changed) && (
-        <p role="status">{t("Some evidence expired while reading")}</p>
+        <p role='status'>{t('Some evidence expired while reading')}</p>
       )}
-      <p className="text-muted-foreground text-sm">
-        {t("Requests")}: {q.data.pages[0]?.total}
+      <p className='text-muted-foreground text-sm'>
+        {t('Requests')}: {q.data.pages[0]?.total}
       </p>
       <EvidenceList
+        chat={!!chat && chat !== 'unassigned'}
         key={JSON.stringify([chat, query, filter])}
         rows={q.data.pages.flatMap((p) => p.items)}
         search={!!query}
       />
       {q.hasNextPage && (
         <Button
-          variant="outline"
+          variant='outline'
           disabled={q.isFetchingNextPage}
           onClick={() => void q.fetchNextPage()}
         >
-          {t("Load more")}
+          {t('Load more')}
         </Button>
       )}
     </div>
-  );
+  )
 }
