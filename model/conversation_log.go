@@ -31,18 +31,32 @@ type ConversationLog struct {
 	Outcome            string `json:"outcome" gorm:"type:varchar(32)"`
 	Truncated          bool   `json:"truncated"`
 	Payload            []byte `json:"-" gorm:"size:16777216"`
-	SessionKey         string `json:"session_key" gorm:"type:varchar(96);index"`
-	SessionState       string `json:"session_state" gorm:"type:varchar(16);index"`
-	NewUserMessages    int    `json:"new_user_messages"`
-	AssistantTextChars int    `json:"assistant_text_chars"`
-	ToolCalls          int    `json:"tool_calls"`
+	SessionKey         string `json:"session_key" gorm:"column:replay_key;type:varchar(96);index:idx_conv_log_replay_key"`
+	SessionState       string `json:"session_state" gorm:"column:replay_state;type:varchar(16);index:idx_conv_log_replay_state"`
+	NewUserMessages    int    `json:"new_user_messages" gorm:"column:replay_new_user_messages"`
+	AssistantTextChars int    `json:"assistant_text_chars" gorm:"column:replay_assistant_text_chars"`
+	ToolCalls          int    `json:"tool_calls" gorm:"column:replay_tool_calls"`
 }
 
+type ConversationReading struct {
+	Input   []ConversationUserItem `json:"input"`
+	Replies []ConversationUserItem `json:"replies"`
+}
+
+type ConversationOutputSpan struct {
+	Item  int    `json:"item"`
+	Part  int    `json:"part"`
+	Kind  string `json:"kind"`
+	Bytes int    `json:"bytes"`
+}
 type ConversationContent struct {
-	Request     string `json:"request"`
-	Response    string `json:"response"`
-	LatestInput string `json:"latest_input"`
-	Output      string `json:"output"`
+	OutputSpans     []ConversationOutputSpan `json:"output_spans,omitempty"`
+	ClientReference string                   `json:"client_reference,omitempty"`
+	Reading         *ConversationReading     `json:"reading,omitempty"`
+	Request         string                   `json:"request"`
+	Response        string                   `json:"response"`
+	LatestInput     string                   `json:"latest_input"`
+	Output          string                   `json:"output"`
 }
 
 func compressConversationPayload(encoded []byte) []byte {
@@ -164,7 +178,7 @@ func GetConversationThread(requestId string, cutoff int64) (*ConversationThread,
 	current := *selected
 	for current.Kind == "responses" && current.PreviousResponseId != "" && len(rows) < 50 {
 		var parents []ConversationLog
-		if err = DB.Omit("payload").Where("user_id = ? AND kind = ? AND response_id = ? AND created_at >= ?", selected.UserId, "responses", current.PreviousResponseId, cutoff).Limit(2).Find(&parents).Error; err != nil {
+		if err = DB.Omit("payload").Where("user_id = ? AND token_id = ? AND kind = ? AND response_id = ? AND created_at >= ?", selected.UserId, selected.TokenId, "responses", current.PreviousResponseId, cutoff).Limit(2).Find(&parents).Error; err != nil {
 			return nil, err
 		}
 		if len(parents) != 1 {
@@ -189,7 +203,7 @@ func GetConversationThread(requestId string, cutoff int64) (*ConversationThread,
 	}
 	for len(frontier) > 0 && len(rows) < 50 && selected.Kind == "responses" {
 		var children []ConversationLog
-		if err = DB.Omit("payload").Where("user_id = ? AND kind = ? AND previous_response_id IN ? AND created_at >= ?", selected.UserId, "responses", frontier, cutoff).Order("created_at, id").Limit(51).Find(&children).Error; err != nil {
+		if err = DB.Omit("payload").Where("user_id = ? AND token_id = ? AND kind = ? AND previous_response_id IN ? AND created_at >= ?", selected.UserId, selected.TokenId, "responses", frontier, cutoff).Order("created_at, id").Limit(51).Find(&children).Error; err != nil {
 			return nil, err
 		}
 		frontier = nil
@@ -262,6 +276,9 @@ func GetConversation(requestId string, cutoff int64) (*ConversationLog, *Convers
 	var entry ConversationLog
 	if err := DB.Where("request_id = ? AND created_at >= ?", requestId, cutoff).First(&entry).Error; err != nil {
 		return nil, nil, err
+	}
+	if len(entry.Payload) == 0 {
+		return &entry, &ConversationContent{}, nil
 	}
 	reader, err := gzip.NewReader(bytes.NewReader(entry.Payload))
 	if err != nil {

@@ -21,7 +21,15 @@ import type { ConversationThread } from '../api'
 export interface ResponsesMessage {
   id: string
   role: string
-  kind: 'message' | 'tool' | 'reasoning' | 'item'
+  kind:
+    | 'message'
+    | 'tool'
+    | 'reasoning'
+    | 'item'
+    | 'context'
+    | 'unknown'
+    | 'snapshot'
+    | 'partial'
   name: string
   body: string
 }
@@ -132,16 +140,65 @@ export function responsesTurnMessages(
     })
   }
   const input = messages(request.input, `${turn.record.request_id}:input`)
-  let latestUser = -1
-  for (let index = input.length - 1; index >= 0; index--) {
-    if (input[index].role === 'user') {
-      latestUser = index
-      break
+  const sourceKind = (
+    kind: string,
+    origin: string
+  ): ResponsesMessage['kind'] => {
+    if (kind === 'context' || kind === 'unknown' || kind === 'partial') {
+      return kind
     }
+    return origin === 'snapshot' ? 'snapshot' : 'message'
   }
-  result.push(
-    ...(includeContext || latestUser < 0 ? input : input.slice(latestUser))
-  )
+  const reading = turn.content.reading
+  if (reading) {
+    const parts = reading.input ?? []
+    const projected = parts.map((p, i): ResponsesMessage => ({
+      id: `${turn.record.request_id}:projected:${i}`,
+      role: p.role,
+      kind: sourceKind(p.kind, p.origin),
+      name: '',
+      body: p.text,
+    }))
+    if (includeContext) {
+      for (const [i, raw] of input.entries()) {
+        if (
+          raw.role === 'user' ||
+          (raw.role === 'assistant' && raw.kind === 'message')
+        ) {
+          const sourceIndex = Number(raw.id.split(':').at(-1))
+          result.push(
+            ...projected.filter(
+              (_, j) =>
+                parts[j].item ===
+                (Number.isFinite(sourceIndex) ? sourceIndex : i)
+            )
+          )
+        } else result.push(raw)
+      }
+      if (!input.length) result.push(...projected)
+    } else {
+      result.push(
+        ...projected.filter(
+          (p, i) =>
+            p.role === 'user' &&
+            p.kind === 'message' &&
+            parts[i].origin === 'request'
+        )
+      )
+      const lastSource = Math.max(
+        -1,
+        ...parts.filter((p) => p.role === 'user').map((p) => p.item)
+      )
+      result.push(
+        ...input.filter((p, i) => p.kind === 'tool' && i > lastSource)
+      )
+    }
+  } else if (includeContext) {
+    result.push(...input)
+  } else {
+    // An older server has no source evidence. Only show tool evidence here.
+    result.push(...input.filter((p) => p.kind === 'tool'))
+  }
   const response = parse(turn.content.response)
   let output = object(response).output
   if (Array.isArray(response)) {
@@ -177,7 +234,22 @@ export function responsesTurnMessages(
       body: turn.content.output,
     })
   }
-  result.push(...replies)
+  if (reading) {
+    result.push(
+      ...replies.filter(
+        (p) => p.kind === 'tool' || (includeContext && p.kind !== 'message')
+      )
+    )
+    for (const [i, p] of (reading.replies ?? []).entries()) {
+      result.push({
+        id: `${turn.record.request_id}:reply:${i}`,
+        role: 'assistant',
+        kind: sourceKind(p.kind, p.origin),
+        name: '',
+        body: p.text,
+      })
+    }
+  } else result.push(...replies)
   return result
 }
 

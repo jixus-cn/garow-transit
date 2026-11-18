@@ -155,6 +155,14 @@ func BeginConversation(c *gin.Context, protocol string) *ConversationCapture {
 				if common.Unmarshal(body, &request) == nil {
 					r.entry.Model, _ = request["model"].(string)
 					r.extraction = extractConversationRequest(request)
+					if r.extraction.ClientKey == "" {
+						for _, header := range []string{"Session_id", "X-Codex-Session-Id"} {
+							if id := strings.TrimSpace(c.Request.Header.Get(header)); id != "" && len(id) <= 255 {
+								r.extraction.ClientKey = model.ConversationHash("session_id|" + id)
+								break
+							}
+						}
+					}
 					if r.legacy {
 						if len(body) > limit {
 							r.content.Request = `{"capture":"request exceeds recording limit"}`
@@ -254,12 +262,18 @@ func (r *ConversationCapture) Finish(status int, cancelled bool) {
 		if status >= 400 {
 			r.entry.Outcome = "failed"
 		}
+		r.extraction.Outputs = r.agg.visible.parts(r.entry.Outcome, r.entry.Truncated)
+		r.agg.toolCalls = max(r.agg.toolCalls, len(r.agg.visible.tools))
 		r.entry.ResponseId = r.agg.responseId
 		r.entry.PreviousResponseId = r.extraction.PrevResponseId
 		if r.legacy {
 			encoded, _ := common.Marshal(sanitizeConversation(final, 0))
 			r.content.Response = string(encoded)
 			r.content.Output = output
+			r.content.ClientReference = r.extraction.ClientKey
+			for _, p := range r.extraction.Outputs {
+				r.content.OutputSpans = append(r.content.OutputSpans, model.ConversationOutputSpan{Item: p.Item, Part: p.Part, Kind: p.Kind, Bytes: len(p.Text)})
+			}
 		}
 		r.audit.Status = status
 		r.audit.Success = r.entry.Outcome == "completed" && !r.entry.Truncated
@@ -333,7 +347,18 @@ func (r *ConversationCapture) Finish(status int, cancelled bool) {
 	// A terminal Responses object contains readable text even when the server
 	// sends no delta events. Do not duplicate text already received as deltas.
 	if r.content.Output == "" {
-		r.content.Output = conversationText(final)
+		v := visibleConversationOutput{}
+		switch data := final.(type) {
+		case map[string]any:
+			v.observe(data)
+		case []any:
+			for _, raw := range data {
+				if event, ok := raw.(map[string]any); ok {
+					v.observe(event)
+				}
+			}
+		}
+		r.content.Output = visibleText(v.parts(r.entry.Outcome, r.entry.Truncated))
 	}
 	r.audit.Status = status
 	r.audit.Success = r.entry.Outcome == "completed" && !r.entry.Truncated
@@ -358,7 +383,7 @@ func (r *ConversationCapture) observeEvent(event map[string]any, output *strings
 	kind, _ := event["type"].(string)
 	switch kind {
 	case "response.output_text.delta", "response.refusal.delta":
-		if delta, ok := event["delta"].(string); ok {
+		if delta, ok := event["delta"].(string); ok && output != nil {
 			output.WriteString(delta)
 		}
 	case "response.completed", "response.done":
@@ -374,10 +399,10 @@ func (r *ConversationCapture) observeEvent(event map[string]any, output *strings
 	if choices, ok := event["choices"].([]any); ok {
 		for _, choice := range choices {
 			item, _ := choice.(map[string]any)
-			if delta, ok := item["delta"].(map[string]any); ok {
+			if delta, ok := item["delta"].(map[string]any); ok && output != nil {
 				output.WriteString(conversationText(delta["content"]))
 			}
-			if message, ok := item["message"].(map[string]any); ok {
+			if message, ok := item["message"].(map[string]any); ok && output != nil {
 				output.WriteString(conversationText(message["content"]))
 			}
 			if reason, ok := item["finish_reason"].(string); ok && reason != "" {

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -65,7 +66,7 @@ func GetConversationSessions(c *gin.Context) {
 	if !ok {
 		return
 	}
-	sessions, total, err := model.GetConversationSessions(userId, start, end, page.Page, page.PageSize)
+	sessions, total, err := model.GetConversationSessions(userId, start, end, page.Page, page.PageSize, c.Query("include_fragments") == "true")
 	if err != nil {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
@@ -211,6 +212,10 @@ func GetConversation(c *gin.Context) {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
+	if err := service.ApplyConversationReading(entry, content); err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
 	c.Header("Cache-Control", "no-store")
 	common.ApiSuccess(c, gin.H{"record": entry, "content": content})
 }
@@ -230,5 +235,14 @@ func GetConversationThread(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
+	for i := range thread.Turns {
+		turn := &thread.Turns[i]
+		if turn.Content != nil {
+			if err := service.ApplyConversationReading(&turn.Record, turn.Content); err != nil {
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+		}
+	}
 	common.ApiSuccess(c, thread)
 }

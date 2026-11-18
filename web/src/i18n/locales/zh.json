@@ -7525,6 +7525,17 @@
     "Linked by explicit Responses previous_response_id.": "由 Responses 显式 previous_response_id 关联。",
     "Inferred by matching the user-message prefix chain.": "通过用户消息前缀链匹配推断关联。",
     "Request side unrecoverable; only assistant text kept.": "请求侧不可恢复，仅保留助手文本。",
-    "Date": "日期"
+    "Date": "日期",
+    "Client context": "客户端附带上下文",
+    "Unverified source": "来源未核实",
+    "Observed reply": "已观察到的回复",
+    "No new user request identified": "本轮未识别到新提问",
+    "Client-supplied history": "客户端提供的历史",
+    "Client-supplied history ({{count}} messages)": "客户端提供的历史（{{count}} 条）",
+    "No verified conversation link for these fragments.": "这些片段没有可验证的会话关联。",
+    "Client-submitted text": "客户端提交的用户文本",
+    "Capture time": "采集时间",
+    "Protocol item / part": "协议条目 / 文本块",
+    "Show unattributed fragments": "显示未归属片段"
   }
 }

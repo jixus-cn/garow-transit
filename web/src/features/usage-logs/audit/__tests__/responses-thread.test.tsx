@@ -73,6 +73,19 @@ const root = {
         },
       ],
     }),
+    reading: {
+      input: [
+        {
+          role: 'user',
+          kind: 'text',
+          origin: 'request',
+          item: 0,
+          part: 0,
+          text: 'root question',
+        },
+      ],
+      replies: [],
+    },
     latest_input: 'root question',
     output: '',
   },
@@ -100,6 +113,19 @@ const tool = {
         },
       ],
     }),
+    reading: {
+      input: [],
+      replies: [
+        {
+          role: 'assistant',
+          kind: 'text',
+          origin: 'response',
+          item: 0,
+          part: 0,
+          text: 'tool branch answer',
+        },
+      ],
+    },
     latest_input: '',
     output: 'tool branch answer',
   },
@@ -110,6 +136,28 @@ const branch = {
   content: {
     request: JSON.stringify({ input: 'branch question' }),
     response: '{}',
+    reading: {
+      input: [
+        {
+          role: 'user',
+          kind: 'text',
+          origin: 'request',
+          item: 0,
+          part: 0,
+          text: 'branch question',
+        },
+      ],
+      replies: [
+        {
+          role: 'assistant',
+          kind: 'text',
+          origin: 'response',
+          item: 0,
+          part: 0,
+          text: 'other branch answer',
+        },
+      ],
+    },
     latest_input: 'branch question',
     output: 'other branch answer',
   },
@@ -154,6 +202,7 @@ it('reconstructs the full supplied history from a standalone context snapshot', 
         ],
       }),
       response: '{}',
+      reading: undefined,
       output: 'latest reply',
     },
   }
@@ -190,6 +239,7 @@ it('uses complete output items without duplicating delta text and omits encrypte
           },
         },
       ]),
+      reading: undefined,
       output: 'complete reply',
     },
   }
@@ -351,6 +401,44 @@ it('keeps supplied history separate from the newest user input in compact replay
         ],
       }),
       response: '{}',
+      reading: {
+        input: [
+          {
+            role: 'user',
+            kind: 'text',
+            origin: 'snapshot',
+            item: 0,
+            part: 0,
+            text: 'earlier question',
+          },
+          {
+            role: 'assistant',
+            kind: 'text',
+            origin: 'snapshot',
+            item: 1,
+            part: 0,
+            text: 'earlier reply',
+          },
+          {
+            role: 'user',
+            kind: 'text',
+            origin: 'request',
+            item: 2,
+            part: 0,
+            text: 'latest question',
+          },
+        ],
+        replies: [
+          {
+            role: 'assistant',
+            kind: 'text',
+            origin: 'response',
+            item: 0,
+            part: 0,
+            text: 'latest answer',
+          },
+        ],
+      },
       output: 'latest answer',
     },
   }
@@ -360,6 +448,51 @@ it('keeps supplied history separate from the newest user input in compact replay
   expect(responsesTurnMessages(turn).map((message) => message.body)).toContain(
     'earlier reply'
   )
+})
+
+it('keeps a trailing client context out of compact replay and labels it in evidence', () => {
+  const env = '<environment_context>fixture</environment_context>'
+  const turn = {
+    ...root,
+    content: {
+      ...root.content,
+      request: JSON.stringify({
+        input: [
+          { role: 'user', content: 'Question' },
+          { role: 'user', content: env },
+        ],
+      }),
+      reading: {
+        input: [
+          {
+            role: 'user',
+            kind: 'text',
+            origin: 'request',
+            item: 0,
+            part: 0,
+            text: 'Question',
+          },
+          {
+            role: 'user',
+            kind: 'context',
+            origin: 'request',
+            item: 1,
+            part: 0,
+            text: env,
+          },
+        ],
+        replies: [],
+      },
+      response: '{}',
+      output: '',
+    },
+  }
+  expect(responsesTurnMessages(turn, false).map((m) => m.body)).toEqual([
+    'Question',
+  ])
+  expect(
+    responsesTurnMessages(turn, true).find((m) => m.body === env)?.kind
+  ).toBe('context')
 })
 
 it('previews long text without losing the full copy or keyboard expansion', async () => {

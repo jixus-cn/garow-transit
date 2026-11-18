@@ -29,7 +29,13 @@ export interface ConversationSession {
   user_id: number
   token_id: number
   token_name: string
-  source: 'client' | 'responses' | 'prefix' | 'residual'
+  source:
+    | 'client'
+    | 'responses'
+    | 'prefix'
+    | 'residual'
+    | 'snapshot'
+    | 'fragment'
   parent_session_id: number
   link_reason: string
   model: string
@@ -49,7 +55,10 @@ export interface ConversationMessage {
   id: number
   session_id: number
   role: 'user' | 'assistant'
-  kind: 'text' | 'context'
+  kind: 'text' | 'context' | 'unknown' | 'final' | 'commentary' | 'partial'
+  origin?: 'request' | 'response' | 'snapshot' | 'legacy'
+  item_index?: number
+  part_index?: number
   content: string
   truncated: boolean
   interjection: boolean
@@ -80,6 +89,7 @@ export interface ConversationLedger {
 }
 
 export interface SessionFilters {
+  include_fragments?: boolean
   p: number
   page_size: number
   user_id?: number
@@ -128,9 +138,10 @@ export async function searchConversationMessages(params: {
   end_timestamp?: number
   page_size?: number
 }): Promise<{ items: ConversationMessage[] }> {
-  const response = await api.get<
-    ApiResponse<{ items: ConversationMessage[] }>
-  >('/api/conversations/messages/search', { params })
+  const response = await api.get<ApiResponse<{ items: ConversationMessage[] }>>(
+    '/api/conversations/messages/search',
+    { params }
+  )
   if (!response.data.success || !response.data.data) {
     throw createServerError(response.data, t('Failed to search conversations'))
   }

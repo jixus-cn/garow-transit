@@ -113,12 +113,25 @@ function ConversationBody(props: { entry: AuditLog }) {
             )}
             <ConversationContent
               label={t('Latest user input')}
-              value={detail.content.latest_input}
+              value={
+                detail.content.latest_input ||
+                t('No new user request identified')
+              }
             />
             <ConversationContent
               label={t('Assistant response')}
               value={detail.content.output}
             />
+            {(detail.content.reading?.replies ?? [])
+              .filter((p) => p.kind === 'unknown')
+              .map((p) => (
+                <ConversationContent
+                  key={`${p.item}:${p.part}:${p.origin}`}
+                  label={t('Unverified source')}
+                  value={p.text}
+                  collapsed
+                />
+              ))}
             <ConversationContent
               label={t('Request context and tools')}
               value={detail.content.request}

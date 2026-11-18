@@ -61,11 +61,16 @@ export function ResponsesConversation(props: { requestId: string }) {
   const branch = responsesThreadPath(thread, selectedId)
   const path = showHistory ? branch : branch.slice(-1)
   const roles: Record<string, string> = {
-    user: t('User'),
+    user: t('Client-submitted text'),
     assistant: t('Assistant'),
     system: t('System'),
     developer: t('Developer'),
     tool: t('Tool result'),
+  }
+  const sourceLabels: Record<string, string> = {
+    context: t('Client context'),
+    unknown: t('Unverified source'),
+    snapshot: t('Client-supplied history'),
   }
   const outcomes: Record<string, string> = {
     completed: t('Completed'),
@@ -183,6 +188,18 @@ export function ResponsesConversation(props: { requestId: string }) {
                   {t('This turn is partial or its body is unavailable.')}
                 </p>
               )}
+              {!showContext &&
+                turn.content?.reading &&
+                !(turn.content.reading.input ?? []).some(
+                  (p) =>
+                    p.role === 'user' &&
+                    p.kind === 'text' &&
+                    p.origin === 'request'
+                ) && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t('No new user request identified')}
+                  </p>
+                )}
               {responsesTurnMessages(turn, showContext).map((message) => (
                 <article
                   key={message.id}
@@ -193,7 +210,10 @@ export function ResponsesConversation(props: { requestId: string }) {
                 >
                   <ConversationContent
                     label={[
-                      roles[message.role] ?? message.role,
+                      sourceLabels[message.kind] ??
+                        roles[message.role] ??
+                        message.role,
+                      message.kind === 'partial' ? t('Incomplete') : '',
                       message.kind === 'reasoning'
                         ? t('Reasoning summary')
                         : '',
@@ -204,7 +224,8 @@ export function ResponsesConversation(props: { requestId: string }) {
                       .join(' · ')}
                     value={message.body}
                     collapsed={
-                      message.kind !== 'message' ||
+                      (message.kind !== 'message' &&
+                        message.kind !== 'partial') ||
                       message.role === 'system' ||
                       message.role === 'developer'
                     }

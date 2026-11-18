@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ColumnDef } from '@tanstack/react-table'
 import { Link } from '@tanstack/react-router'
+import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +31,8 @@ import { formatNumber, formatTimestampRelative } from '@/lib/format'
 import type { ConversationSession } from '../api'
 
 const SOURCE_LABEL: Record<string, string> = {
+  snapshot: 'Context snapshot',
+  fragment: 'Unattributed fragments',
   client: 'Client identifier',
   responses: 'Responses link',
   prefix: 'Inferred link',
@@ -41,7 +43,9 @@ const SOURCE_TOOLTIP: Record<string, string> = {
   client: 'Linked by a session ID sent by the client.',
   responses: 'Linked by explicit Responses previous_response_id.',
   prefix: 'Inferred by matching the user-message prefix chain.',
-  residual: 'Request side unrecoverable; only assistant text kept.',
+  snapshot: 'Context snapshot',
+  fragment: 'No verified conversation link for these fragments.',
+  residual: 'No verified conversation link for these fragments.',
 }
 
 export function useSessionColumns(): ColumnDef<ConversationSession>[] {
@@ -56,9 +60,15 @@ export function useSessionColumns(): ColumnDef<ConversationSession>[] {
         cell: ({ row }) => (
           <span
             className='font-mono tabular-nums'
-            title={dayjs.unix(row.original.updated_at).format('YYYY-MM-DD HH:mm:ss')}
+            title={dayjs
+              .unix(row.original.updated_at)
+              .format('YYYY-MM-DD HH:mm:ss')}
           >
-            {formatTimestampRelative(row.original.updated_at, 'seconds', locale)}
+            {formatTimestampRelative(
+              row.original.updated_at,
+              'seconds',
+              locale
+            )}
           </span>
         ),
         meta: { label: t('Updated'), mobileTitle: true },
@@ -107,7 +117,9 @@ export function useSessionColumns(): ColumnDef<ConversationSession>[] {
         size: 120,
         cell: ({ row }) => (
           <Badge
-            variant={row.original.source === 'residual' ? 'warning' : 'secondary'}
+            variant={
+              row.original.source === 'residual' ? 'warning' : 'secondary'
+            }
             title={t(SOURCE_TOOLTIP[row.original.source] ?? '')}
           >
             {t(SOURCE_LABEL[row.original.source] ?? row.original.source)}

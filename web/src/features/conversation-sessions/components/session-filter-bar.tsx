@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { Table } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { CompactDateTimeRangePicker } from '@/features/usage-logs/components/compact-date-time-range-picker'
 import {
   LogsFilterField,
@@ -41,6 +42,7 @@ export function SessionFilterBar(props: {
   const { t } = useTranslation()
   const filters = props.filters
   const hasActiveFilters =
+    !!filters.include_fragments ||
     filters.user_id !== undefined ||
     filters.start_timestamp !== undefined ||
     filters.end_timestamp !== undefined
@@ -51,7 +53,24 @@ export function SessionFilterBar(props: {
       searchLoading={props.isFetching}
       onSearch={props.onSearch}
       onReset={props.onReset}
-      actionEnd={<SessionSearchDialog userId={filters.user_id} />}
+      actionEnd={
+        <>
+          <Button
+            variant='outline'
+            size='sm'
+            aria-pressed={!!filters.include_fragments}
+            onClick={() =>
+              props.onChange({
+                include_fragments: !filters.include_fragments,
+                p: 1,
+              })
+            }
+          >
+            {t('Show unattributed fragments')}
+          </Button>
+          <SessionSearchDialog userId={filters.user_id} />
+        </>
+      }
       primaryFilters={
         <>
           <LogsFilterField>

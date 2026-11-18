@@ -48,7 +48,9 @@ export function SessionSearchDialog(props: { userId?: number }) {
       open={open}
       onOpenChange={setOpen}
       title={t('Search conversation content')}
-      description={t('Search retained user and assistant text. Root access is logged.')}
+      description={t(
+        'Search retained user and assistant text. Root access is logged.'
+      )}
       trigger={
         <Button variant='outline' size='sm'>
           <Search className='size-4' aria-hidden='true' />
@@ -84,7 +86,13 @@ export function SessionSearchDialog(props: { userId?: number }) {
             <li key={message.id} className='rounded-md border p-2.5 text-sm'>
               <div className='text-muted-foreground mb-1 flex items-center justify-between gap-2 text-xs'>
                 <span>
-                  {message.role === 'user' ? t('User') : t('Assistant')} ·{' '}
+                  {message.origin === 'snapshot' &&
+                    t('Client-supplied history')}
+                  {message.origin !== 'snapshot' &&
+                    (message.role === 'user'
+                      ? t('Client-submitted text')
+                      : t('Assistant'))}{' '}
+                  ·{' '}
                   {dayjs.unix(message.created_at).format('YYYY-MM-DD HH:mm:ss')}
                 </span>
                 <Button

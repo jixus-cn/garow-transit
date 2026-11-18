@@ -7525,6 +7525,17 @@
     "Linked by explicit Responses previous_response_id.": "Linked by explicit Responses previous_response_id.",
     "Inferred by matching the user-message prefix chain.": "Inferred by matching the user-message prefix chain.",
     "Request side unrecoverable; only assistant text kept.": "Request side unrecoverable; only assistant text kept.",
-    "Date": "Date"
+    "Date": "Date",
+    "Client context": "Contexte fourni par le client",
+    "Unverified source": "Source non vérifiée",
+    "Observed reply": "Réponse observée",
+    "No new user request identified": "Aucune nouvelle demande identifiée",
+    "Client-supplied history": "Historique fourni par le client",
+    "Client-supplied history ({{count}} messages)": "Historique fourni par le client ({{count}} messages)",
+    "No verified conversation link for these fragments.": "Aucun lien de conversation vérifié pour ces fragments.",
+    "Client-submitted text": "Texte utilisateur transmis par le client",
+    "Capture time": "Heure de capture",
+    "Protocol item / part": "Élément du protocole / partie",
+    "Show unattributed fragments": "Afficher les fragments non attribués"
   }
 }

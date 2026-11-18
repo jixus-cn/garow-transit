@@ -491,30 +491,27 @@ func TestConversationSessionCapture(t *testing.T) {
 		assert.Equal(t, "s-a", messages[0].RequestId)
 	})
 
-	t.Run("client key joins and branches", func(t *testing.T) {
-		runSessionCapture(t, "ck-a", `{"model":"m","prompt_cache_key":"ck-1","input":[{"role":"user","content":"x"}]}`, sessionResponseText("r1"), false)
-		runSessionCapture(t, "ck-b", `{"model":"m","prompt_cache_key":"ck-1","input":[{"role":"user","content":"y"}]}`, sessionResponseText("r2"), false)
+	t.Run("explicit client id accepts incremental user messages", func(t *testing.T) {
+		runSessionCapture(t, "ck-a", `{"model":"m","session_id":"ck-1","input":[{"role":"user","content":"x"}]}`, sessionResponseText("r1"), false)
+		runSessionCapture(t, "ck-b", `{"model":"m","session_id":"ck-1","input":[{"role":"user","content":"y"}]}`, sessionResponseText("r2"), false)
 		var sessions []model.ConversationSession
 		require.NoError(t, db.Order("id").Find(&sessions).Error)
-		require.Len(t, sessions, 3)
-		parent, child := sessions[1], sessions[2]
-		assert.Equal(t, "client", parent.Source)
-		assert.Equal(t, "ck-1", parent.ClientKey)
-		assert.Equal(t, parent.Id, child.ParentSessionId)
-		assert.Equal(t, "branch", child.LinkReason)
-		assert.Equal(t, "ck-1", child.ClientKey)
+		require.Len(t, sessions, 2)
+		assert.Equal(t, "client", sessions[1].Source)
+		assert.Equal(t, 2, sessions[1].RequestCount)
+		assert.Equal(t, 2, sessions[1].UserMessageCount)
 	})
 
-	t.Run("compaction starts linked child", func(t *testing.T) {
+	t.Run("diverging weak snapshots are not declared related", func(t *testing.T) {
 		runSessionCapture(t, "cp-a", sessionRequestBody("seed", "second", "third"), sessionResponseText("r"), false)
 		runSessionCapture(t, "cp-b", sessionRequestBody("seed", "compacted"), sessionResponseText("r"), false)
 		var child model.ConversationSession
 		require.NoError(t, db.Order("id DESC").First(&child).Error)
-		assert.Equal(t, "compaction_or_fork", child.LinkReason)
-		assert.NotZero(t, child.ParentSessionId)
-		var count int64
-		require.NoError(t, db.Model(&model.ConversationMessage{}).Where("session_id = ?", child.ParentSessionId).Count(&count).Error)
-		assert.EqualValues(t, 4, count, "parent messages stay intact")
+		assert.Empty(t, child.LinkReason)
+		assert.Zero(t, child.ParentSessionId)
+		var original model.ConversationLog
+		require.NoError(t, db.Where("request_id = ?", "cp-a").First(&original).Error)
+		assert.NotEqual(t, original.SessionKey, child.SessionKey)
 	})
 
 	t.Run("interjection after interruption", func(t *testing.T) {
@@ -606,7 +603,7 @@ func TestConversationSessionBackfill(t *testing.T) {
 	service.BackfillConversationSessions()
 	require.Eventually(t, func() bool {
 		var count int64
-		return db.Model(&model.ConversationLog{}).Where("session_state <> ''").Count(&count).Error == nil && count == 2
+		return db.Model(&model.ConversationLog{}).Where("replay_state <> ''").Count(&count).Error == nil && count == 2
 	}, 5*time.Second, 10*time.Millisecond)
 	var sessions []model.ConversationSession
 	require.NoError(t, db.Find(&sessions).Error)
@@ -644,7 +641,7 @@ func TestConversationSessionBackfill(t *testing.T) {
 		row := model.ConversationLog{RequestId: "old-null", UserId: 1, TokenId: 42, CreatedAt: 1600, Model: "fixture-model", Kind: "responses", Outcome: "completed"}
 		content := model.ConversationContent{Request: sessionRequestBody("null-state"), Response: `{"output":[]}`, Output: "null reply"}
 		require.NoError(t, model.StoreConversation(&row, content, model.AuditLog{EventId: "old-null", UserId: 1, Username: "fixture-user", ActorRole: 1, Category: model.AuditCategoryConversation}))
-		require.NoError(t, db.Model(&model.ConversationLog{}).Where("request_id = ?", "old-null").Update("session_state", nil).Error)
+		require.NoError(t, db.Model(&model.ConversationLog{}).Where("request_id = ?", "old-null").Update("replay_state", nil).Error)
 		service.BackfillConversationSessions()
 		var ledger model.ConversationLog
 		require.NoError(t, db.Where("request_id = ?", "old-null").First(&ledger).Error)
@@ -654,7 +651,7 @@ func TestConversationSessionBackfill(t *testing.T) {
 		assert.Equal(t, "null reply", message.Content)
 	})
 
-	t.Run("ancestor row joins live-created session", func(t *testing.T) {
+	t.Run("shorter backfilled snapshot is not attached on a shared opening", func(t *testing.T) {
 		runSessionCapture(t, "live-new", sessionRequestBody("alpha", "beta"), sessionResponseText("live reply"), false)
 		var live model.ConversationSession
 		require.NoError(t, db.Order("id DESC").First(&live).Error)
@@ -666,8 +663,8 @@ func TestConversationSessionBackfill(t *testing.T) {
 		}, 5*time.Second, 10*time.Millisecond)
 		var ledger model.ConversationLog
 		require.NoError(t, db.Where("request_id = ?", "old-ancestor").First(&ledger).Error)
-		assert.Equal(t, live.SessionKey, ledger.SessionKey)
-		assert.Equal(t, 0, ledger.NewUserMessages)
+		assert.NotEqual(t, live.SessionKey, ledger.SessionKey)
+		assert.Equal(t, 1, ledger.NewUserMessages)
 		var userCount int64
 		require.NoError(t, db.Model(&model.ConversationMessage{}).Where("session_id = ? AND role = ?", live.Id, "user").Count(&userCount).Error)
 		assert.EqualValues(t, 2, userCount, "ancestor history is not duplicated")
@@ -827,10 +824,10 @@ func TestConversationSessionStorageMatrix(t *testing.T) {
 			require.NoError(t, model.StoreSessionConversation(&r2, residualEx, "fragment two", 0, 65536, nil, audit, false))
 			var residualSessions []model.ConversationSession
 			require.NoError(t, db.Where("source = ?", "residual").Find(&residualSessions).Error)
-			require.Len(t, residualSessions, 1, "residual catch-all is one per user across dialects")
+			require.Len(t, residualSessions, 2, "unrelated fragments remain separate across dialects")
 			var residualMessages int64
 			require.NoError(t, db.Model(&model.ConversationMessage{}).Where("session_id = ?", residualSessions[0].Id).Count(&residualMessages).Error)
-			assert.EqualValues(t, 2, residualMessages)
+			assert.EqualValues(t, 1, residualMessages)
 			require.NoError(t, model.CleanupConversations(3000))
 			var remaining int64
 			require.NoError(t, db.Model(&model.ConversationMessage{}).Count(&remaining).Error)

@@ -4,17 +4,20 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
+	"sync"
 )
 
 // ConversationSession is the metadata skeleton of one reconstructed conversation.
 // It never holds message bodies; those live append-only in ConversationMessage.
 type ConversationSession struct {
+	AnchorHash       string `json:"-" gorm:"type:varchar(32);index"`
 	Id               int64  `json:"id" gorm:"primaryKey"`
 	SessionKey       string `json:"session_key" gorm:"type:varchar(96);uniqueIndex"`
 	ClientKey        string `json:"client_key" gorm:"type:varchar(255);index"`
@@ -27,8 +30,8 @@ type ConversationSession struct {
 	Model            string `json:"model" gorm:"type:varchar(255)"`
 	LastModel        string `json:"last_model" gorm:"type:varchar(255)"`
 	Protocol         string `json:"protocol" gorm:"type:varchar(32)"`
-	CreatedAt        int64  `json:"created_at" gorm:"index"`
-	UpdatedAt        int64  `json:"updated_at" gorm:"index"`
+	CreatedAt        int64  `json:"created_at" gorm:"index;autoCreateTime:false"`
+	UpdatedAt        int64  `json:"updated_at" gorm:"index;autoUpdateTime:false"`
 	MessageCount     int    `json:"message_count"`
 	UserMessageCount int    `json:"user_message_count"`
 	RequestCount     int    `json:"request_count"`
@@ -38,6 +41,9 @@ type ConversationSession struct {
 // ConversationMessage is one visible utterance, stored exactly once per session.
 // Rows are append-only; retention cleanup is the only deletion path.
 type ConversationMessage struct {
+	Origin       string `json:"origin" gorm:"type:varchar(16)"`
+	Item         int    `json:"item_index"`
+	Part         int    `json:"part_index"`
 	Id           int64  `json:"id" gorm:"primaryKey"`
 	SessionId    int64  `json:"session_id" gorm:"index"`
 	Role         string `json:"role" gorm:"type:varchar(16)"`
@@ -47,19 +53,34 @@ type ConversationMessage struct {
 	Interjection bool   `json:"interjection"`
 	ContentHash  string `json:"content_hash" gorm:"type:varchar(32);index"`
 	RequestId    string `json:"request_id" gorm:"type:varchar(64);index"`
-	CreatedAt    int64  `json:"created_at" gorm:"index"`
+	CreatedAt    int64  `json:"created_at" gorm:"index;autoCreateTime:false"`
 }
 
 // ConversationUserItem is one user-role input item as sent by the client.
 // Hash covers the full text even when stored content is truncated.
 type ConversationUserItem struct {
-	Hash    string `json:"hash"`
-	Text    string `json:"text"`
-	Context bool   `json:"context"`
+	Hash      string `json:"-"`
+	Text      string `json:"text"`
+	Context   bool   `json:"-"`
+	Role      string `json:"role"`
+	Kind      string `json:"kind"`
+	Origin    string `json:"origin"`
+	Item      int    `json:"item"`
+	Part      int    `json:"part"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
+
+func (p ConversationUserItem) IsQuestion() bool {
+	return (p.Role == "" || p.Role == "user") && !p.Context && (p.Kind == "" || p.Kind == "text") && p.Text != ""
+}
+
+func (ConversationSession) TableName() string { return "conversation_sessions_v2" }
+func (ConversationMessage) TableName() string { return "conversation_messages_v2" }
 
 // ConversationExtraction carries request-side facts from capture to the worker.
 type ConversationExtraction struct {
+	Outputs        []ConversationUserItem
+	Snapshot       bool
 	ClientKey      string
 	UserItems      []ConversationUserItem
 	ItemCount      int
@@ -87,33 +108,37 @@ func uniqueSessionKey(prefix, seed, requestId string) string {
 	return conversationSessionKey(prefix, seed) + ":" + requestId
 }
 
-// conversationUserDelta compares hash sequences positionally. Identical texts at
-// different positions stay distinct; only a tail extension yields new messages.
-func conversationUserDelta(stored []string, items []ConversationUserItem) ([]ConversationUserItem, bool) {
-	incoming := make([]string, len(items))
-	for i, item := range items {
-		incoming[i] = item.Hash
-	}
-	short, long := stored, incoming
-	if len(long) < len(short) {
-		short, long = long, short
-	}
-	for i := range short {
-		if short[i] != long[i] {
-			return nil, false
+// Match authored request segments only. Client context and reported replies
+// are evidence, but neither establishes conversation identity.
+func questionSequence(items []ConversationUserItem) []string {
+	var hashes []string
+	for _, v := range items {
+		if v.IsQuestion() {
+			hashes = append(hashes, v.Hash)
 		}
 	}
-	if len(incoming) > len(stored) {
-		return items[len(stored):], true
-	}
-	return nil, true
+	return hashes
 }
-
+func extendsQuestions(incoming, stored []string) bool {
+	return len(stored) > 0 && len(incoming) >= len(stored) && slices.Equal(stored, incoming[:len(stored)])
+}
+func afterQuestions(items []ConversationUserItem, n int) []ConversationUserItem {
+	if n == 0 {
+		return items
+	}
+	for i, v := range items {
+		if v.IsQuestion() {
+			n--
+			if n == 0 {
+				return items[i+1:]
+			}
+		}
+	}
+	return nil
+}
 func sessionUserHashes(tx *gorm.DB, sessionId int64) ([]string, error) {
 	var hashes []string
-	err := tx.Model(&ConversationMessage{}).
-		Where("session_id = ? AND role = ?", sessionId, "user").
-		Order("created_at, id").Pluck("content_hash", &hashes).Error
+	err := tx.Model(&ConversationMessage{}).Where("session_id = ? AND role = ? AND kind = ?", sessionId, "user", "text").Order("id").Pluck("content_hash", &hashes).Error
 	return hashes, err
 }
 
@@ -127,183 +152,226 @@ func newConversationSession(entry *ConversationLog, key, clientKey, source strin
 	}
 }
 
-// residualConversationSession is a deterministic per-user catch-all for turns
-// whose request side is unrecoverable (oversized/placeholder) but whose assistant
-// text survives. Cleaning keeps that text visible instead of dropping it; the
-// source label tells the UI these fragments are not attributed to a conversation.
-func residualConversationSession(tx *gorm.DB, entry *ConversationLog) (*ConversationSession, error) {
-	key := conversationSessionKey("u:", fmt.Sprintf("%d", entry.UserId))
-	session := newConversationSession(entry, key, "", "residual", 0, "")
-	if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "session_key"}}, DoNothing: true}).Create(session).Error; err != nil {
-		return nil, err
-	}
-	var found ConversationSession
-	if err := tx.Where("session_key = ?", key).First(&found).Error; err != nil {
-		return nil, err
-	}
-	return &found, nil
-}
-
-// resolveConversationSession joins a request to a session using only explicit
-// identifiers or deterministic prefix chains, never text similarity or time
-// proximity. A diverging history starts a child session; old rows stay intact.
+// Resolve a protocol parent within the same principal, then a typed client
+// conversation ID. An unlinked snapshot may extend exactly one substantive
+// prefix; a shared preamble, cache key, or account ID is never a conversation.
 func resolveConversationSession(tx *gorm.DB, entry *ConversationLog, ex *ConversationExtraction) (*ConversationSession, []ConversationUserItem, error) {
-	var session *ConversationSession
-	if ex.ClientKey != "" {
-		var found ConversationSession
-		err := tx.Where("user_id = ? AND client_key = ?", entry.UserId, ex.ClientKey).
-			Order("updated_at DESC, id DESC").First(&found).Error
-		if err == nil {
-			session = &found
-		} else if err != gorm.ErrRecordNotFound {
+	q := questionSequence(ex.UserItems)
+	anchor := ""
+	if len(q) > 0 {
+		anchor = q[0]
+	}
+	create := func(source string, parent int64, reason string) (*ConversationSession, []ConversationUserItem, error) {
+		s := newConversationSession(entry, uniqueSessionKey("v2:", fmt.Sprintf("%d|%d", entry.UserId, entry.TokenId), entry.RequestId), ex.ClientKey, source, parent, reason)
+		s.AnchorHash = anchor
+		if err := tx.Create(s).Error; err != nil {
 			return nil, nil, err
 		}
-		if session == nil {
-			session = newConversationSession(entry, uniqueSessionKey("c:", ex.ClientKey, entry.RequestId), ex.ClientKey, "client", 0, "")
-		}
+		return s, ex.UserItems, nil
 	}
-	if session == nil && ex.PrevResponseId != "" {
-		var parent ConversationLog
-		err := tx.Select("session_key").Where("user_id = ? AND response_id = ? AND session_state = ?", entry.UserId, ex.PrevResponseId, "linked").
-			Order("created_at DESC, id DESC").First(&parent).Error
-		if err == nil && parent.SessionKey != "" {
-			var found ConversationSession
-			if err = tx.Where("session_key = ?", parent.SessionKey).First(&found).Error; err == nil {
-				session = &found
-			} else if err != gorm.ErrRecordNotFound {
+	var existing *ConversationSession
+	if ex.PrevResponseId != "" {
+		var parents []ConversationLog
+		if err := tx.Select("replay_key").Where("user_id = ? AND token_id = ? AND response_id = ? AND replay_state = ?", entry.UserId, entry.TokenId, ex.PrevResponseId, "linked").Limit(2).Find(&parents).Error; err != nil {
+			return nil, nil, err
+		}
+		if len(parents) != 1 {
+			return create("fragment", 0, "unresolved_parent")
+		}
+		var s ConversationSession
+		if err := tx.Where("session_key = ?", parents[0].SessionKey).Take(&s).Error; err != nil {
+			return nil, nil, err
+		}
+		if ex.ClientKey != "" && s.ClientKey != "" && ex.ClientKey != s.ClientKey {
+			return create("fragment", 0, "conflicting_ids")
+		}
+		var siblings int64
+		if err := tx.Model(&ConversationLog{}).Where("user_id = ? AND token_id = ? AND previous_response_id = ? AND replay_state = ?", entry.UserId, entry.TokenId, ex.PrevResponseId, "linked").Count(&siblings).Error; err != nil {
+			return nil, nil, err
+		}
+		if siblings > 0 {
+			return create("responses", s.Id, "branch")
+		}
+		if s.Source != "client" && s.Source != "responses" {
+			if err := tx.Model(&s).Update("source", "responses").Error; err != nil {
 				return nil, nil, err
 			}
-		} else if err != gorm.ErrRecordNotFound {
+		}
+		existing = &s
+	} else if ex.ClientKey != "" {
+		var matches []ConversationSession
+		if err := tx.Where("user_id = ? AND token_id = ? AND client_key = ?", entry.UserId, entry.TokenId, ex.ClientKey).Limit(2).Find(&matches).Error; err != nil {
 			return nil, nil, err
 		}
+		if len(matches) == 0 {
+			return create("client", 0, "")
+		}
+		if len(matches) > 1 {
+			return create("fragment", 0, "ambiguous_client")
+		}
+		existing = &matches[0]
 	}
-	if session == nil && len(ex.UserItems) > 0 {
-		var candidates []ConversationSession
-		if err := tx.Where("user_id = ? AND token_id = ? AND source <> ?", entry.UserId, entry.TokenId, "residual").
-			Order("updated_at DESC, id DESC").Limit(20).Find(&candidates).Error; err != nil {
+	if existing != nil {
+		if ex.PrevResponseId != "" && existing.ClientKey == "" && ex.ClientKey != "" {
+			if err := tx.Model(existing).Update("client_key", ex.ClientKey).Error; err != nil {
+				return nil, nil, err
+			}
+		}
+		// With a protocol parent, one new question is an increment, even if its text repeats.
+		if !ex.Snapshot && len(q) <= 1 {
+			return existing, ex.UserItems, nil
+		}
+		old, err := sessionUserHashes(tx, existing.Id)
+		if err != nil {
 			return nil, nil, err
 		}
-		best := -1
-		bestLen := -1
+		if len(old) == 0 || len(q) == 0 {
+			return existing, ex.UserItems, nil
+		}
+		if extendsQuestions(q, old) {
+			return existing, afterQuestions(ex.UserItems, len(old)), nil
+		}
+		// A tool-result/history fragment does not invalidate an explicit parent.
+		if ex.PrevResponseId != "" {
+			var delta []ConversationUserItem
+			for _, v := range ex.UserItems {
+				if v.Origin != "snapshot" {
+					delta = append(delta, v)
+				}
+			}
+			return existing, delta, nil
+		}
+		return create("client", existing.Id, "branch")
+	}
+	if anchor == "" {
+		if len(ex.UserItems) > 0 || len(ex.Outputs) > 0 {
+			return create("residual", 0, "")
+		}
+		return nil, nil, nil
+	}
+	if len(q) > 1 || ex.Snapshot {
+		var candidates []ConversationSession
+		if err := tx.Where("user_id = ? AND token_id = ? AND anchor_hash = ? AND source IN ?", entry.UserId, entry.TokenId, anchor, []string{"prefix", "snapshot"}).Limit(21).Find(&candidates).Error; err != nil {
+			return nil, nil, err
+		}
+		if len(candidates) > 20 {
+			return create("fragment", 0, "ambiguous_prefix")
+		}
+		var match *ConversationSession
+		var n int
 		for i := range candidates {
-			hashes, err := sessionUserHashes(tx, candidates[i].Id)
+			old, err := sessionUserHashes(tx, candidates[i].Id)
 			if err != nil {
 				return nil, nil, err
 			}
-			if _, ok := conversationUserDelta(hashes, ex.UserItems); ok && len(hashes) > bestLen {
-				best, bestLen = i, len(hashes)
+			if extendsQuestions(q, old) {
+				if match != nil {
+					return create("fragment", 0, "ambiguous_prefix")
+				}
+				match = &candidates[i]
+				n = len(old)
 			}
 		}
-		if best >= 0 {
-			session = &candidates[best]
-		} else {
-			seed := fmt.Sprintf("%d|%d|%s", entry.UserId, entry.TokenId, ex.UserItems[0].Hash)
-			parent := int64(0)
-			reason := ""
-			for i := range candidates {
-				hashes, err := sessionUserHashes(tx, candidates[i].Id)
-				if err != nil {
+		if match != nil {
+			if match.Source == "snapshot" {
+				if err := tx.Model(match).Update("source", "prefix").Error; err != nil {
 					return nil, nil, err
 				}
-				if len(hashes) > 0 && hashes[0] == ex.UserItems[0].Hash {
-					parent = candidates[i].Id
-					reason = "compaction_or_fork"
-					break
-				}
 			}
-			session = newConversationSession(entry, uniqueSessionKey("p:", seed, entry.RequestId), "", "prefix", parent, reason)
+			return match, afterQuestions(ex.UserItems, n), nil
 		}
 	}
-	if session == nil {
-		return nil, nil, nil
-	}
-
-	if session.Id == 0 {
-		if err := tx.Create(session).Error; err != nil {
-			return nil, nil, err
-		}
-		return session, ex.UserItems, nil
-	}
-
-	stored, err := sessionUserHashes(tx, session.Id)
-	if err != nil {
-		return nil, nil, err
-	}
-	newItems, compatible := conversationUserDelta(stored, ex.UserItems)
-	if compatible {
-		return session, newItems, nil
-	}
-	child := newConversationSession(entry, uniqueSessionKey("b:", fmt.Sprintf("%d", session.Id), entry.RequestId), session.ClientKey, session.Source, session.Id, "branch")
-	if err := tx.Create(child).Error; err != nil {
-		return nil, nil, err
-	}
-	return child, ex.UserItems, nil
+	return create("snapshot", 0, "")
 }
+
+var conversationProjectionMu sync.Mutex
 
 // StoreSessionConversation appends only the delta of a request to its session.
 // backfill updates an existing ledger row instead of creating one.
 func StoreSessionConversation(entry *ConversationLog, ex *ConversationExtraction, assistantText string, toolCalls int, textMax int, legacy *ConversationContent, audit AuditLog, backfill bool) error {
-	var appendedUsers int
-	var appendedAssistant bool
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	// Serialize live capture and backfill while resolving identity on this writer.
+	conversationProjectionMu.Lock()
+	defer conversationProjectionMu.Unlock()
+	if len(ex.Outputs) == 0 && assistantText != "" {
+		ex.Outputs = []ConversationUserItem{{Role: "assistant", Kind: "text", Origin: "response", Text: assistantText}}
+	}
+	err := DB.Session(&gorm.Session{Logger: gormlogger.Default.LogMode(gormlogger.Silent)}).Transaction(func(tx *gorm.DB) error {
+		if backfill {
+			var done int64
+			if err := tx.Model(&ConversationLog{}).Where("request_id = ? AND replay_state IN ?", entry.RequestId, []string{"linked", "unassigned"}).Count(&done).Error; err != nil {
+				return err
+			}
+			if done > 0 {
+				return nil
+			}
+		}
 		session, newItems, err := resolveConversationSession(tx, entry, ex)
 		if err != nil {
 			return err
 		}
-		if session == nil && assistantText != "" {
-			session, err = residualConversationSession(tx, entry)
-			if err != nil {
-				return err
-			}
-		}
-		entry.NewUserMessages = len(newItems)
-		entry.AssistantTextChars = len(assistantText)
+		entry.NewUserMessages = 0
+		entry.AssistantTextChars = 0
 		entry.ToolCalls = toolCalls
-		if session == nil {
-			entry.SessionState = "unassigned"
-		} else {
+		entry.SessionKey = ""
+		entry.SessionState = "unassigned"
+		if session != nil {
 			entry.SessionKey = session.SessionKey
 			entry.SessionState = "linked"
-			interjection := len(newItems) > 0 && (session.LastOutcome == "interrupted" || session.LastOutcome == "incomplete")
-			for i, item := range newItems {
-				content, truncated := truncateConversationText(item.Text, textMax)
-				kind := "text"
-				if item.Context {
-					kind = "context"
+			interjection := session.RequestCount > 0 && (session.LastOutcome == "interrupted" || session.LastOutcome == "incomplete")
+			added := 0
+			humanCount := 0
+			seenQuestionItem := map[int]bool{}
+			for _, item := range append(slices.Clone(newItems), ex.Outputs...) {
+				if item.Text == "" {
+					continue
 				}
-				msg := ConversationMessage{
-					SessionId: session.Id, Role: "user", Kind: kind, Content: content,
-					Truncated: truncated, Interjection: interjection && i == 0,
-					ContentHash: item.Hash, RequestId: entry.RequestId, CreatedAt: entry.CreatedAt,
+				if item.Kind == "" {
+					item.Kind = "text"
+					if item.Context {
+						item.Kind = "context"
+					}
+				}
+				if item.Role == "" {
+					item.Role = "user"
+				}
+				indexed := item.Origin != ""
+				if item.Origin == "" {
+					item.Origin = "request"
+				}
+				if item.Hash == "" {
+					item.Hash = ConversationHash(item.Text)
+				}
+				if session.RequestCount > 0 && (item.Origin == "snapshot" && item.Role == "assistant" || item.Kind == "context" || item.Kind == "unknown" && item.Role == "user") {
+					var seen int64
+					if err := tx.Model(&ConversationMessage{}).Where("session_id = ? AND role = ? AND content_hash = ?", session.Id, item.Role, item.Hash).Count(&seen).Error; err != nil {
+						return err
+					}
+					if seen > 0 {
+						continue
+					}
+				}
+				text, cut := truncateConversationText(item.Text, textMax)
+				msg := ConversationMessage{SessionId: session.Id, Role: item.Role, Kind: item.Kind, Origin: item.Origin, Item: item.Item, Part: item.Part, Content: text, Truncated: cut || item.Truncated, ContentHash: item.Hash, RequestId: entry.RequestId, CreatedAt: entry.CreatedAt}
+				if item.IsQuestion() && (!indexed || !seenQuestionItem[item.Item]) {
+					seenQuestionItem[item.Item] = true
+					humanCount++
+					if item.Origin == "request" {
+						entry.NewUserMessages++
+					}
+					if item.Origin == "request" && interjection {
+						msg.Interjection = true
+						interjection = false
+					}
+				}
+				if item.Role == "assistant" && item.Origin == "response" {
+					entry.AssistantTextChars += utf8.RuneCountInString(item.Text)
 				}
 				if err := tx.Create(&msg).Error; err != nil {
 					return err
 				}
-				appendedUsers++
+				added++
 			}
-			if assistantText != "" {
-				var existing int64
-				if err := tx.Model(&ConversationMessage{}).Where("request_id = ? AND role = ?", entry.RequestId, "assistant").Count(&existing).Error; err != nil {
-					return err
-				}
-				if existing == 0 {
-					content, truncated := truncateConversationText(assistantText, textMax)
-					msg := ConversationMessage{
-						SessionId: session.Id, Role: "assistant", Kind: "text", Content: content,
-						Truncated: truncated, ContentHash: ConversationHash(assistantText),
-						RequestId: entry.RequestId, CreatedAt: entry.CreatedAt,
-					}
-					if err := tx.Create(&msg).Error; err != nil {
-						return err
-					}
-					appendedAssistant = true
-				}
-			}
-			updates := map[string]any{
-				"request_count":      session.RequestCount + 1,
-				"message_count":      session.MessageCount + appendedUsers + boolToInt(appendedAssistant),
-				"user_message_count": session.UserMessageCount + appendedUsers,
-			}
+			updates := map[string]any{"request_count": session.RequestCount + 1, "message_count": session.MessageCount + added, "user_message_count": session.UserMessageCount + humanCount}
 			if entry.CreatedAt >= session.UpdatedAt {
 				updates["updated_at"] = entry.CreatedAt
 				updates["last_outcome"] = entry.Outcome
@@ -311,15 +379,14 @@ func StoreSessionConversation(entry *ConversationLog, ex *ConversationExtraction
 					updates["last_model"] = entry.Model
 				}
 			}
-			if err := tx.Model(&ConversationSession{}).Where("id = ?", session.Id).Updates(updates).Error; err != nil {
+			if err := tx.Model(session).Updates(updates).Error; err != nil {
 				return err
 			}
 		}
 		if backfill {
 			return tx.Model(&ConversationLog{}).Where("request_id = ?", entry.RequestId).
-				Updates(map[string]any{"session_key": entry.SessionKey, "session_state": entry.SessionState,
-					"new_user_messages": entry.NewUserMessages, "assistant_text_chars": entry.AssistantTextChars,
-					"tool_calls": entry.ToolCalls}).Error
+				Updates(map[string]any{"replay_key": entry.SessionKey, "replay_state": entry.SessionState,
+					"replay_new_user_messages": entry.NewUserMessages, "replay_assistant_text_chars": entry.AssistantTextChars, "replay_tool_calls": entry.ToolCalls}).Error
 		}
 		if legacy != nil {
 			encoded, err := common.Marshal(legacy)
@@ -339,13 +406,6 @@ func StoreSessionConversation(entry *ConversationLog, ex *ConversationExtraction
 	return nil
 }
 
-func boolToInt(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
-}
-
 func truncateConversationText(text string, max int) (string, bool) {
 	if max <= 0 || len(text) <= max {
 		return text, false
@@ -361,13 +421,16 @@ func truncateConversationText(text string, max int) (string, bool) {
 // Migrated rows carry NULL session_state; freshly inserted rows carry ”.
 func PendingConversationBackfill(limit int) ([]ConversationLog, error) {
 	var rows []ConversationLog
-	err := DB.Where("(session_state = ? OR session_state IS NULL) AND payload IS NOT NULL", "").
+	err := DB.Omit("payload").Where("(replay_state = ? OR replay_state IS NULL)", "").
 		Order("user_id, created_at, id").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 
-func GetConversationSessions(userId int, start, end int64, page, pageSize int) ([]ConversationSession, int64, error) {
+func GetConversationSessions(userId int, start, end int64, page, pageSize int, includeFragments bool) ([]ConversationSession, int64, error) {
 	query := DB.Model(&ConversationSession{})
+	if !includeFragments {
+		query = query.Where("source NOT IN ?", []string{"fragment", "residual"})
+	}
 	if userId > 0 {
 		query = query.Where("user_id = ?", userId)
 	}
@@ -410,8 +473,8 @@ func GetConversationSessionDetail(id int64, beforeId int64, limit int) (*Convers
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 	var ledger []ConversationLog
-	if err := DB.Omit("payload").Where("session_key = ? AND session_state = ?", session.SessionKey, "linked").
-		Order("created_at, id").Limit(1000).Find(&ledger).Error; err != nil {
+	if err := DB.Omit("payload").Where("replay_key = ? AND replay_state = ?", session.SessionKey, "linked").
+		Order("created_at, id").Find(&ledger).Error; err != nil {
 		return nil, nil, nil, false, err
 	}
 	return &session, messages, ledger, hasMore, nil
@@ -430,7 +493,7 @@ func SearchConversationMessages(keyword string, userId int, start, end int64, li
 	}
 	escaped := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(keyword)
 	var messages []ConversationMessage
-	err := query.Where("content LIKE ? ESCAPE '!'", "%"+escaped+"%").
+	err := query.Where("kind IN ? AND content LIKE ? ESCAPE '!'", []string{"text", "final", "commentary", "partial"}, "%"+escaped+"%").
 		Order("created_at DESC, id DESC").Limit(limit).Find(&messages).Error
 	return messages, err
 }
@@ -447,16 +510,32 @@ func CleanupConversationSessions(cutoff int64) error {
 	if err := DB.Where("session_id IN (?)", expired).Delete(&ConversationMessage{}).Error; err != nil {
 		return err
 	}
-	return DB.Where("updated_at < ?", cutoff).Delete(&ConversationSession{}).Error
+	if err := DB.Where("updated_at < ?", cutoff).Delete(&ConversationSession{}).Error; err != nil {
+		return err
+	}
+	// Rollback tables retain their original expiry; a side-by-side upgrade must
+	// not prolong retention of evidence produced by the previous version.
+	if DB.Migrator().HasTable("conversation_sessions") && DB.Migrator().HasTable("conversation_messages") {
+		old := DB.Table("conversation_sessions").Select("id").Where("updated_at < ?", cutoff)
+		if err := DB.Table("conversation_messages").Where("session_id IN (?)", old).Delete(&ConversationMessage{}).Error; err != nil {
+			return err
+		}
+		return DB.Table("conversation_sessions").Where("updated_at < ?", cutoff).Delete(&ConversationSession{}).Error
+	}
+	return nil
 }
 
 // ConversationRequestPreview extracts the human request from an IDE-wrapped
 // user message (file-mention preamble + "## My request:") and truncates it for
 // session list previews.
 func ConversationRequestPreview(text string) string {
-	if idx := strings.Index(text, "## My request:"); idx >= 0 {
-		text = text[idx+len("## My request:"):]
+	var visible []string
+	for _, v := range ConversationInputParts(text) {
+		if v.IsQuestion() {
+			visible = append(visible, v.Text)
+		}
 	}
+	text = strings.Join(visible, "\n")
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
@@ -475,7 +554,7 @@ func ConversationSessionFirstUserText(ids []int64) map[int64]string {
 		return result
 	}
 	sub := DB.Model(&ConversationMessage{}).Select("min(id)").
-		Where("session_id IN ? AND role = ? AND kind = ?", ids, "user", "text").
+		Where("session_id IN ? AND role = ? AND kind = ? AND (origin = ? OR origin IS NULL OR origin = ?)", ids, "user", "text", "request", "").
 		Group("session_id")
 	var rows []ConversationMessage
 	if err := DB.Where("id IN (?)", sub).Find(&rows).Error; err != nil {

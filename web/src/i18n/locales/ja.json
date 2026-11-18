@@ -7525,6 +7525,17 @@
     "Linked by explicit Responses previous_response_id.": "Linked by explicit Responses previous_response_id.",
     "Inferred by matching the user-message prefix chain.": "Inferred by matching the user-message prefix chain.",
     "Request side unrecoverable; only assistant text kept.": "Request side unrecoverable; only assistant text kept.",
-    "Date": "Date"
+    "Date": "Date",
+    "Client context": "クライアントのコンテキスト",
+    "Unverified source": "出所未確認",
+    "Observed reply": "観測された応答",
+    "No new user request identified": "新しいユーザーの質問を特定できませんでした",
+    "Client-supplied history": "クライアント提供の履歴",
+    "Client-supplied history ({{count}} messages)": "クライアント提供の履歴（{{count}} 件）",
+    "No verified conversation link for these fragments.": "これらの断片と会話の関連は確認できていません。",
+    "Client-submitted text": "クライアントが送信したユーザーテキスト",
+    "Capture time": "記録時刻",
+    "Protocol item / part": "プロトコル項目 / パート",
+    "Show unattributed fragments": "帰属不明の断片を表示"
   }
 }

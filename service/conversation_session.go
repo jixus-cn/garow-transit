@@ -39,81 +39,95 @@ func conversationInflight() int {
 	return min(max(common.GetEnvOrDefault("CONVERSATION_LOG_MAX_INFLIGHT", 128), 8), 1024)
 }
 
-var conversationContextPrefixes = []string{
-	"<environment_context>", "<user_instructions>", "<system-reminder>",
-	"<permissions instructions>", "<turn_aborted>", "<context>",
-}
-
-func isConversationContext(text string) bool {
-	trimmed := strings.TrimSpace(text)
-	for _, prefix := range conversationContextPrefixes {
-		if strings.HasPrefix(trimmed, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// extractConversationRequest pulls session identity and user-role items from a
-// parsed request. Hashes cover full text; storage truncation happens later.
+// A client may send a string, one message, or a snapshot of prior messages.
 func extractConversationRequest(request map[string]any) model.ConversationExtraction {
 	if nested, ok := request["response"].(map[string]any); ok {
 		request = nested
 	}
 	ex := model.ConversationExtraction{}
-	for _, key := range []string{"prompt_cache_key", "session_id", "conversation_id"} {
-		if value, ok := request[key].(string); ok && value != "" {
-			ex.ClientKey = value
+	for _, key := range []string{"conversation_id", "conversation", "session_id"} {
+		value := request[key]
+		if m, ok := value.(map[string]any); ok {
+			value = m["id"]
+		}
+		if id, ok := value.(string); ok && strings.TrimSpace(id) != "" {
+			ex.ClientKey = model.ConversationHash(key + "|" + id)
 			break
 		}
 	}
-	if ex.ClientKey == "" {
-		if meta, ok := request["metadata"].(map[string]any); ok {
-			ex.ClientKey, _ = meta["user_id"].(string)
-		}
-	}
 	ex.PrevResponseId, _ = request["previous_response_id"].(string)
-	var items []any
-	switch value := request["input"].(type) {
-	case []any:
-		items = value
-	case string:
-		if value != "" {
-			ex.UserItems = append(ex.UserItems, model.ConversationUserItem{Hash: model.ConversationHash(value), Text: value})
-		}
-		ex.ItemCount = 1
-		return ex
+	input := request["input"]
+	if input == nil {
+		input = request["messages"]
 	}
-	if items == nil {
-		switch value := request["messages"].(type) {
-		case []any:
-			items = value
-		case string:
-			if value != "" {
-				ex.UserItems = append(ex.UserItems, model.ConversationUserItem{Hash: model.ConversationHash(value), Text: value})
-			}
-			ex.ItemCount = 1
-			return ex
-		}
+	var items []any
+	switch v := input.(type) {
+	case string:
+		items = []any{map[string]any{"role": "user", "content": v}}
+	case []any:
+		items = v
 	}
 	ex.ItemCount = len(items)
-	lastUser := -1
-	for i, item := range items {
-		if m, ok := item.(map[string]any); ok && m["role"] == "user" {
-			lastUser = i
-		}
-	}
-	for i, item := range items {
-		m, ok := item.(map[string]any)
-		if !ok || m["role"] != "user" {
+	lastQuestion := -1
+	lastActivity := -1
+	for i, raw := range items {
+		item, _ := raw.(map[string]any)
+		role, _ := item["role"].(string)
+		if role != "user" && role != "assistant" {
+			if role == "tool" || (role == "" && item["type"] != nil) {
+				lastActivity = i
+			}
 			continue
 		}
-		text := conversationText(m["content"])
-		ex.UserItems = append(ex.UserItems, model.ConversationUserItem{
-			Hash:    model.ConversationHash(text),
-			Text:    text,
-			Context: isConversationContext(text) || (i != lastUser && len(text) > 4000),
-		})
+		if role == "assistant" {
+			lastActivity = i
+		}
+		add := func(text string, part int) {
+			segments := []model.ConversationUserItem{{Role: "assistant", Kind: "text", Text: text, Hash: model.ConversationHash(text)}}
+			if role == "user" {
+				segments = model.ConversationInputParts(text)
+			}
+			for _, v := range segments {
+				if strings.TrimSpace(v.Text) == "" {
+					continue
+				}
+				v.Item = i
+				v.Part = part
+				ex.UserItems = append(ex.UserItems, v)
+				if v.IsQuestion() {
+					lastQuestion = i
+				}
+			}
+		}
+		switch content := item["content"].(type) {
+		case string:
+			add(content, 0)
+		case []any:
+			for j, raw := range content {
+				switch part := raw.(type) {
+				case string:
+					add(part, j)
+				case map[string]any:
+					t, _ := part["type"].(string)
+					if t == "text" || t == "input_text" || t == "output_text" || t == "" {
+						if s, ok := part["text"].(string); ok {
+							add(s, j)
+						}
+					}
+				}
+			}
+		}
+	}
+	for i := range ex.UserItems {
+		p := &ex.UserItems[i]
+		p.Origin = "request"
+		if p.Role == "assistant" || p.Item < lastQuestion || p.Item < lastActivity {
+			p.Origin = "snapshot"
+			ex.Snapshot = true
+		}
+	}
+	if lastActivity >= 0 {
+		ex.Snapshot = true
 	}
 	return ex
 }
@@ -128,10 +142,10 @@ var conversationToolItemTypes = map[string]bool{
 // O(visible text) instead of O(all SSE bytes). Reasoning deltas never enter the
 // text budget. Legacy dual-write additionally keeps the sanitized event list.
 type conversationAggregator struct {
+	visible    visibleConversationOutput
 	line       []byte
 	raw        bytes.Buffer
 	sawEvent   bool
-	output     strings.Builder
 	events     []any
 	eventBytes int
 	final      any
@@ -191,7 +205,8 @@ func (r *ConversationCapture) observeSessionLine(line []byte) {
 	}
 	a.sawEvent = true
 	a.raw.Reset()
-	r.observeEvent(event, &a.output)
+	r.observeEvent(event, nil)
+	a.visible.observe(event)
 	kind, _ := event["type"].(string)
 	if kind == "" {
 		a.final = event
@@ -241,10 +256,7 @@ func (r *ConversationCapture) observeSessionLine(line []byte) {
 			encoded, _ := common.Marshal(sanitized)
 			a.events = append(a.events, sanitized)
 			a.eventBytes += len(encoded)
-		} else {
-			a.truncated = true
-			r.entry.Truncated = true
-		}
+		} // The legacy event budget must not stop visible-text capture.
 	}
 }
 
@@ -259,7 +271,8 @@ func (r *ConversationCapture) finishSessionAggregation() (string, any) {
 	if !a.sawEvent {
 		var full map[string]any
 		if common.Unmarshal(a.raw.Bytes(), &full) == nil {
-			r.observeEvent(full, &a.output)
+			r.observeEvent(full, nil)
+			a.visible.observe(full)
 			a.final = full
 			if id, ok := full["id"].(string); ok {
 				a.responseId = id
@@ -270,11 +283,7 @@ func (r *ConversationCapture) finishSessionAggregation() (string, any) {
 	if final == nil && a.legacy {
 		final = a.events
 	}
-	output := a.output.String()
-	if output == "" {
-		output = conversationText(final)
-	}
-	return output, final
+	return visibleText(a.visible.parts(r.entry.Outcome, r.entry.Truncated)), final
 }
 
 var conversationBackfillMu sync.Mutex
@@ -288,6 +297,8 @@ func BackfillConversationSessions() {
 	conversationBackfillMu.Lock()
 	defer conversationBackfillMu.Unlock()
 	processed := 0
+	legacyRows := model.DB.Migrator().HasTable("conversation_messages")
+	legacyTools := model.DB.Migrator().HasColumn("conversation_logs", "tool_calls")
 	for {
 		rows, err := model.PendingConversationBackfill(100)
 		if err != nil {
@@ -304,37 +315,43 @@ func BackfillConversationSessions() {
 			entry, content, err := model.GetConversation(row.RequestId, 0)
 			if err != nil {
 				common.SysError("conversation session backfill read failed; request_id=" + row.RequestId)
-				model.DB.Model(&model.ConversationLog{}).Where("request_id = ?", row.RequestId).Update("session_state", "error")
+				model.DB.Model(&model.ConversationLog{}).Where("request_id = ?", row.RequestId).Update("replay_state", "error")
 				continue
 			}
-			ex := model.ConversationExtraction{Placeholder: true, PrevResponseId: entry.PreviousResponseId}
-			var request map[string]any
-			if common.UnmarshalJsonStr(content.Request, &request) == nil {
-				if _, marker := request["capture"]; !marker {
-					ex = extractConversationRequest(request)
-					if ex.PrevResponseId == "" {
-						ex.PrevResponseId = entry.PreviousResponseId
-					}
+			ex, toolCalls := recordedConversation(entry, content)
+			if legacyTools {
+				var prior int
+				if err := model.DB.Table("conversation_logs").Select("COALESCE(tool_calls,0)").Where("request_id = ?", row.RequestId).Scan(&prior).Error; err != nil {
+					common.SysError("conversation legacy tool count read failed")
+					return
 				}
+				toolCalls = max(toolCalls, prior)
 			}
-			toolCalls := 0
-			var events []any
-			if common.UnmarshalJsonStr(content.Response, &events) == nil {
-				for _, value := range events {
-					if event, ok := value.(map[string]any); ok {
-						if kind, _ := event["type"].(string); kind == "response.output_item.added" {
-							if item, ok := event["item"].(map[string]any); ok {
-								if itemType, _ := item["type"].(string); conversationToolItemTypes[itemType] {
-									toolCalls++
-								}
+			if legacyRows && ex.Placeholder {
+				var old []model.ConversationMessage
+				if err := model.DB.Table("conversation_messages").Select("id,role,kind,content,content_hash,truncated").Where("request_id = ?", row.RequestId).Order("id").Find(&old).Error; err != nil {
+					common.SysError("conversation legacy evidence read failed")
+					return
+				}
+				for i, raw := range old {
+					if raw.Role == "user" {
+						for _, p := range model.ConversationInputParts(raw.Content) {
+							p.Origin = "legacy"
+							p.Item = i
+							p.Truncated = raw.Truncated
+							if p.Kind == "text" {
+								p.Kind = "unknown"
 							}
+							ex.UserItems = append(ex.UserItems, p)
 						}
+					} else if raw.Role == "assistant" && content.Response == "" && len(ex.Outputs) == 0 {
+						ex.Outputs = append(ex.Outputs, model.ConversationUserItem{Role: "assistant", Origin: "legacy", Kind: "unknown", Text: raw.Content, Truncated: raw.Truncated})
 					}
 				}
 			}
-			if err := model.StoreSessionConversation(entry, &ex, content.Output, toolCalls, conversationTextMax(), nil, model.AuditLog{}, true); err != nil {
+			if err := model.StoreSessionConversation(entry, &ex, "", toolCalls, conversationTextMax(), nil, model.AuditLog{}, true); err != nil {
 				common.SysError("conversation session backfill store failed; request_id=" + row.RequestId)
-				model.DB.Model(&model.ConversationLog{}).Where("request_id = ?", row.RequestId).Update("session_state", "error")
+				model.DB.Model(&model.ConversationLog{}).Where("request_id = ?", row.RequestId).Update("replay_state", "error")
 				continue
 			}
 			processed++

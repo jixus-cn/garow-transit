@@ -16,7 +16,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { FileText, Wrench } from 'lucide-react'
+import { Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -29,10 +29,10 @@ import {
 } from '@/components/ui/collapsible'
 import { ConversationText } from '@/features/usage-logs/audit/components/conversation-content'
 import dayjs from '@/lib/dayjs'
+import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { ConversationMessage } from '../api'
-import { splitUserRequest } from '../lib/session-view'
 
 export function ToolDivider(props: { count: number }) {
   const { t } = useTranslation()
@@ -72,42 +72,21 @@ function Provenance(props: { message: ConversationMessage }) {
             <dd className='inline'>{message.request_id}</dd>
           </div>
           <div>
-            <dt className='inline'>{t('Time')}: </dt>
+            <dt className='inline'>{t('Capture time')}: </dt>
             <dd className='inline'>
               {dayjs.unix(message.created_at).format('YYYY-MM-DD HH:mm:ss')}
             </dd>
           </div>
+          {message.origin !== 'legacy' && message.item_index !== undefined && (
+            <div>
+              <dt className='inline'>{t('Protocol item / part')}: </dt>
+              <dd className='inline'>
+                {formatNumber(message.item_index + 1)} /{' '}
+                {formatNumber((message.part_index ?? 0) + 1)}
+              </dd>
+            </div>
+          )}
         </dl>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-function PreambleFold(props: { preamble: string }) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className='min-w-0'>
-      <CollapsibleTrigger
-        render={
-          <Button
-            variant='ghost'
-            size='sm'
-            className='text-muted-foreground h-auto max-w-full justify-start gap-1 px-1 py-0.5 text-xs whitespace-normal'
-          />
-        }
-      >
-        <FileText className='size-3.5 shrink-0' aria-hidden='true' />
-        {t('File references & context ({{chars}} characters)', {
-          chars: props.preamble.length,
-        })}
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        {open && (
-          <pre className='text-muted-foreground mt-1 max-h-60 overflow-y-auto font-sans text-xs leading-relaxed break-words whitespace-pre-wrap'>
-            {props.preamble}
-          </pre>
-        )}
       </CollapsibleContent>
     </Collapsible>
   )
@@ -120,11 +99,14 @@ export function MessageBubble(props: {
   const { t } = useTranslation()
   const message = props.message
   const isUser = message.role === 'user'
-  const isContext = isUser && message.kind === 'context'
-  const label = isUser ? t('User message') : t('Assistant reply')
-  const { request, preamble } = isUser
-    ? splitUserRequest(message.content)
-    : { request: message.content, preamble: '' }
+  const isContext = message.kind === 'context' || message.kind === 'unknown'
+  let label = isUser ? t('Client-submitted text') : t('Assistant')
+  if (message.kind === 'context') label = t('Client context')
+  if (message.kind === 'unknown') label = t('Unverified source')
+  let status = t('Observed reply')
+  if (props.final) status = t('Final reply')
+  else if (message.kind === 'commentary') status = t('Process note')
+  else if (message.kind === 'partial') status = t('Incomplete')
   let bubbleTone = 'bg-background'
   if (isUser) {
     bubbleTone = 'bg-muted/40'
@@ -146,17 +128,16 @@ export function MessageBubble(props: {
       >
         <div className='flex flex-wrap items-center gap-1.5'>
           <span className='text-muted-foreground text-xs font-medium'>
-            {isUser ? t('User') : t('Assistant')}
+            {label}
           </span>
           {message.interjection && (
             <Badge variant='warning'>{t('Interjection')}</Badge>
           )}
-          {!isUser && (
+          {!isUser && !isContext && message.origin !== 'snapshot' && (
             <Badge variant={props.final ? 'default' : 'secondary'}>
-              {props.final ? t('Final reply') : t('Process note')}
+              {status}
             </Badge>
           )}
-          {isContext && <Badge variant='outline'>{t('Injected context')}</Badge>}
           {message.truncated && (
             <Badge variant='destructive'>{t('Truncated')}</Badge>
           )}
@@ -164,10 +145,7 @@ export function MessageBubble(props: {
         {isContext ? (
           <ContextBody value={message.content} label={label} />
         ) : (
-          <>
-            {preamble && <PreambleFold preamble={preamble} />}
-            <ConversationText value={request} label={label} />
-          </>
+          <ConversationText value={message.content} label={label} />
         )}
         <Provenance message={message} />
       </div>
@@ -189,9 +167,7 @@ function ContextBody(props: { value: string; label: string }) {
           />
         }
       >
-        {t('Injected context ({{chars}} characters, click to expand)', {
-          chars: props.value.length,
-        })}
+        {props.label} 路 {t('Show full text')}
       </CollapsibleTrigger>
       <CollapsibleContent>
         {open && (

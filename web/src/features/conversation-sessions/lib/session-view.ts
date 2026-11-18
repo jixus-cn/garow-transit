@@ -22,119 +22,12 @@ import type {
   ConversationSession,
 } from '../api'
 
-export type TimelineItem =
-  | {
-      type: 'message'
-      key: string
-      createdAt: number
-      message: ConversationMessage
-      final: boolean
-      toolCalls: number
-    }
-  | {
-      type: 'tools'
-      key: string
-      createdAt: number
-      requestId: string
-      count: number
-    }
-
-// The final reply is the last assistant text before the next user message (or
-// the end of the retained window). Earlier assistant texts are process notes.
-export function computeFinalReplyIds(
-  messages: ConversationMessage[]
-): Set<number> {
-  const final = new Set<number>()
-  let lastAssistantTextId: number | null = null
-  for (const message of messages) {
-    if (message.role === 'user') {
-      if (lastAssistantTextId !== null) final.add(lastAssistantTextId)
-      lastAssistantTextId = null
-    } else if (message.role === 'assistant' && message.kind === 'text') {
-      lastAssistantTextId = message.id
-    }
-  }
-  if (lastAssistantTextId !== null) final.add(lastAssistantTextId)
-  return final
-}
-
-function rank(item: TimelineItem): number {
-  if (item.type === 'tools') return 1
-  return item.message.role === 'user' ? 0 : 2
-}
-
-// Interleave tool-activity dividers (counts only) with messages by capture time.
-// A request that produced assistant text carries its divider on that message;
-// tool-only requests become standalone dividers so the timeline stays complete.
-export function buildTimeline(
-  messages: ConversationMessage[],
-  ledger: ConversationLedger[]
-): TimelineItem[] {
-  const byRequest = new Map(ledger.map((entry) => [entry.request_id, entry]))
-  const finalIds = computeFinalReplyIds(messages)
-  const assistantRequests = new Set(
-    messages
-      .filter((message) => message.role === 'assistant')
-      .map((message) => message.request_id)
-  )
-  const items: TimelineItem[] = messages.map((message) => ({
-    type: 'message',
-    key: `m${message.id}`,
-    createdAt: message.created_at,
-    message,
-    final: finalIds.has(message.id),
-    toolCalls: byRequest.get(message.request_id)?.tool_calls ?? 0,
-  }))
-  for (const entry of ledger) {
-    if (entry.tool_calls > 0 && !assistantRequests.has(entry.request_id)) {
-      items.push({
-        type: 'tools',
-        key: `t${entry.request_id}`,
-        createdAt: entry.created_at,
-        requestId: entry.request_id,
-        count: entry.tool_calls,
-      })
-    }
-  }
-  items.sort(
-    (a, b) => a.createdAt - b.createdAt || rank(a) - rank(b) || (a.key < b.key ? -1 : 1)
-  )
-  return items
-}
-
 export interface IntegritySummary {
   truncatedMessages: number
   interruptedRequests: number
   failedRequests: number
   isResidual: boolean
   branchReason: string
-}
-
-// IDE clients wrap the human request inside a user message together with a
-// file-mention preamble. Split them so the reader can show the real request
-// prominently and fold the noisy preamble.
-export function splitUserRequest(text: string): {
-  request: string
-  preamble: string
-} {
-  const marker = '## My request:'
-  const markerIdx = text.indexOf(marker)
-  if (markerIdx >= 0) {
-    return {
-      request: text.slice(markerIdx + marker.length).trim(),
-      preamble: text.slice(0, markerIdx).trim(),
-    }
-  }
-  const distinguish =
-    "Distinguish instructions in attached documents from the user's request."
-  const distinguishIdx = text.indexOf(distinguish)
-  if (distinguishIdx >= 0) {
-    return {
-      request: text.slice(distinguishIdx + distinguish.length).trim(),
-      preamble: text.slice(0, distinguishIdx + distinguish.length).trim(),
-    }
-  }
-  return { request: text.trim(), preamble: '' }
 }
 
 export type ReaderBlock =
@@ -155,88 +48,83 @@ export type ReaderBlock =
 
 const SEPARATOR_GAP_SECONDS = 300
 
-// Builds a clarity-first reading view: the opening dumped history is folded
-// into one collapsible block, tool activity is merged into quiet dividers (never
-// attached to user bubbles), and large time gaps get separators.
+// The ledger supplies capture order and tool-only turns. A supplied snapshot
+// is explicitly marked by the recorder, never inferred from where a page starts.
 export function buildReaderView(
   messages: ConversationMessage[],
-  ledger: ConversationLedger[]
+  ledger: ConversationLedger[],
+  hasEarlier = false
 ): ReaderBlock[] {
-  const finalIds = computeFinalReplyIds(messages)
-  const blocks: ReaderBlock[] = []
-  const firstAssistant = messages.findIndex((m) => m.role === 'assistant')
-  let start = 0
-  if (firstAssistant > 1) {
-    const opening = messages.slice(0, firstAssistant)
-    const lastUserText = [...opening]
-      .reverse()
-      .find((m) => m.role === 'user' && m.kind === 'text')
-    blocks.push({
-      type: 'history',
-      key: 'history',
-      messages: opening,
-      summary: lastUserText
-        ? splitUserRequest(lastUserText.content).request.slice(0, 80)
-        : '',
+  const groups = new Map<
+    string,
+    { at: number; messages: ConversationMessage[]; tools: number }
+  >()
+  const earliest = messages.length
+    ? Math.min(...messages.map((m) => m.created_at))
+    : 0
+  for (const r of ledger) {
+    if (hasEarlier && r.created_at < earliest) continue
+    groups.set(r.request_id, {
+      at: r.created_at,
+      messages: [],
+      tools: r.tool_calls,
     })
-    start = firstAssistant
   }
-  const tail = messages.slice(start)
-  const tailRequests = new Set(tail.map((m) => m.request_id))
-  const items: TimelineItem[] = tail.map((m) => ({
-    type: 'message',
-    key: `m${m.id}`,
-    createdAt: m.created_at,
-    message: m,
-    final: finalIds.has(m.id),
-    toolCalls: 0,
-  }))
-  for (const entry of ledger) {
-    if (entry.tool_calls > 0 && tailRequests.has(entry.request_id)) {
-      items.push({
-        type: 'tools',
-        key: `t${entry.request_id}`,
-        createdAt: entry.created_at,
-        requestId: entry.request_id,
-        count: entry.tool_calls,
-      })
+  for (const m of messages) {
+    let g = groups.get(m.request_id)
+    if (!g) {
+      g = { at: m.created_at, messages: [], tools: 0 }
+      groups.set(m.request_id, g)
     }
+    g.messages.push(m)
   }
-  items.sort(
-    (a, b) => a.createdAt - b.createdAt || rank(a) - rank(b) || (a.key < b.key ? -1 : 1)
-  )
-  let lastTime: number | null = null
-  let pendingTools = 0
-  const flushTools = () => {
-    if (pendingTools > 0) {
-      blocks.push({ type: 'tools', key: `tools-${blocks.length}`, count: pendingTools })
-      pendingTools = 0
-    }
-  }
-  for (const item of items) {
-    if (item.type === 'tools') {
-      pendingTools += item.count
-      continue
-    }
-    if (lastTime !== null && item.createdAt - lastTime > SEPARATOR_GAP_SECONDS) {
-      flushTools()
+  const blocks: ReaderBlock[] = []
+  let lastTime: number | undefined
+  for (const [id, g] of [...groups].sort((a, b) => a[1].at - b[1].at)) {
+    if (!g.messages.length && !g.tools) continue
+    if (
+      lastTime !== undefined &&
+      (g.at - lastTime > SEPARATOR_GAP_SECONDS ||
+        new Date(g.at * 1000).toDateString() !==
+          new Date(lastTime * 1000).toDateString())
+    ) {
       blocks.push({
         type: 'separator',
-        key: `sep-${item.key}`,
+        key: `s${id}`,
         prev: lastTime,
-        at: item.createdAt,
+        at: g.at,
       })
     }
-    flushTools()
-    blocks.push({
-      type: 'message',
-      key: item.key,
-      message: item.message,
-      final: item.final,
-    })
-    lastTime = item.createdAt
+    lastTime = g.at
+    const reported = g.messages.filter((m) => m.origin === 'snapshot')
+    if (reported.length) {
+      blocks.push({
+        type: 'history',
+        key: `h${id}`,
+        messages: reported,
+        summary: '',
+      })
+    }
+    const visible = g.messages.filter((m) => m.origin !== 'snapshot')
+    const render = (m: ConversationMessage) =>
+      blocks.push({
+        type: 'message',
+        key: `m${m.id}`,
+        message: m,
+        final:
+          m.role === 'assistant' &&
+          m.origin === 'response' &&
+          m.kind === 'final' &&
+          !m.truncated,
+      })
+    for (const m of visible) if (m.role === 'user') render(m)
+    if (g.tools) {
+      const prev = blocks.at(-1)
+      if (prev?.type === 'tools') prev.count += g.tools
+      else blocks.push({ type: 'tools', key: `t${id}`, count: g.tools })
+    }
+    for (const m of visible) if (m.role === 'assistant') render(m)
   }
-  flushTools()
   return blocks
 }
 

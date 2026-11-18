@@ -46,6 +46,8 @@ import { buildReaderView, summarizeIntegrity } from '../lib/session-view'
 import { MessageBubble, ToolDivider } from './message-bubble'
 
 const SOURCE_LABEL: Record<string, string> = {
+  snapshot: 'Context snapshot',
+  fragment: 'Unattributed fragments',
   client: 'Client identifier',
   responses: 'Responses link',
   prefix: 'Inferred link',
@@ -65,6 +67,7 @@ export function SessionReader(props: { sessionId: number }) {
     getNextPageParam: (lastPage) =>
       lastPage.has_more ? lastPage.messages[0]?.id : undefined,
     retry: false,
+    gcTime: 0,
   })
 
   const pages = query.data?.pages ?? EMPTY_PAGES
@@ -75,14 +78,11 @@ export function SessionReader(props: { sessionId: number }) {
     [pages]
   )
   const readerBlocks = useMemo(
-    () => buildReaderView(messages, ledger),
-    [messages, ledger]
+    () => buildReaderView(messages, ledger, query.hasNextPage),
+    [messages, ledger, query.hasNextPage]
   )
   const integrity = useMemo(
-    () =>
-      session
-        ? summarizeIntegrity(session, messages, ledger)
-        : null,
+    () => (session ? summarizeIntegrity(session, messages, ledger) : null),
     [session, messages, ledger]
   )
 
@@ -98,35 +98,47 @@ export function SessionReader(props: { sessionId: number }) {
 
   const banner: string[] = []
   if (integrity?.isResidual) {
-    banner.push(
-      t('These fragments could not be attributed to a conversation; the request side was not recoverable.')
-    )
+    banner.push(t('No verified conversation link for these fragments.'))
   }
-  if (integrity?.branchReason) {
-    banner.push(t('This session is an inferred branch or compaction of an earlier session.'))
+  if (integrity?.branchReason && session.parent_session_id) {
+    banner.push(
+      t(
+        'This session is an inferred branch or compaction of an earlier session.'
+      )
+    )
   }
   if (integrity && integrity.truncatedMessages > 0) {
     banner.push(
-      t('{{count}} messages are truncated.', { count: integrity.truncatedMessages })
+      t('{{count}} messages are truncated.', {
+        count: integrity.truncatedMessages,
+      })
     )
   }
   if (integrity && integrity.interruptedRequests > 0) {
     banner.push(
-      t('{{count}} requests were interrupted.', { count: integrity.interruptedRequests })
+      t('{{count}} requests were interrupted.', {
+        count: integrity.interruptedRequests,
+      })
     )
   }
 
   return (
     <div className='flex h-full min-h-0 flex-col gap-3'>
       <div className='flex shrink-0 flex-wrap items-center gap-2'>
-        <Button variant='outline' size='sm' render={<Link to='/conversation-sessions' />}>
+        <Button
+          variant='outline'
+          size='sm'
+          render={<Link to='/conversation-sessions' />}
+        >
           <ArrowLeft className='size-4' aria-hidden='true' />
           {t('Back to conversations')}
         </Button>
         <span className='text-muted-foreground font-mono text-xs'>
           #{session.id}
         </span>
-        <Badge variant='secondary'>{t(SOURCE_LABEL[session.source] ?? session.source)}</Badge>
+        <Badge variant='secondary'>
+          {t(SOURCE_LABEL[session.source] ?? session.source)}
+        </Badge>
         {session.last_outcome && (
           <Badge variant='outline'>{session.last_outcome}</Badge>
         )}
@@ -134,11 +146,13 @@ export function SessionReader(props: { sessionId: number }) {
 
       <div className='text-muted-foreground shrink-0 space-y-1 text-xs'>
         <p>
-          {t('User')} #{session.user_id} · {t('API Keys')} {session.token_name || '—'} ·{' '}
-          {t('Models')} {session.last_model || session.model || '—'}
+          {t('User')} #{session.user_id} · {t('API Keys')}{' '}
+          {session.token_name || '—'} · {t('Models')}{' '}
+          {session.last_model || session.model || '—'}
         </p>
         <p>
-          {t('Updated')}: {dayjs.unix(session.updated_at).format('YYYY-MM-DD HH:mm:ss')} ·{' '}
+          {t('Updated')}:{' '}
+          {dayjs.unix(session.updated_at).format('YYYY-MM-DD HH:mm:ss')} ·{' '}
           {t('{{messages}} messages / {{requests}} requests', {
             messages: formatNumber(session.message_count),
             requests: formatNumber(session.request_count),
@@ -169,11 +183,13 @@ export function SessionReader(props: { sessionId: number }) {
               disabled={query.isFetchingNextPage}
               onClick={() => void query.fetchNextPage()}
             >
-              {query.isFetchingNextPage ? t('Loading...') : t('Load earlier messages')}
+              {query.isFetchingNextPage
+                ? t('Loading...')
+                : t('Load earlier messages')}
             </Button>
           </div>
         )}
-        {messages.length === 0 ? (
+        {readerBlocks.length === 0 ? (
           <EmptyState title={t('No recorded text')} />
         ) : (
           <div className='flex flex-col gap-3'>
@@ -188,7 +204,13 @@ export function SessionReader(props: { sessionId: number }) {
                 )
               }
               if (block.type === 'separator') {
-                return <TimeSeparator key={block.key} prev={block.prev} at={block.at} />
+                return (
+                  <TimeSeparator
+                    key={block.key}
+                    prev={block.prev}
+                    at={block.at}
+                  />
+                )
               }
               if (block.type === 'tools') {
                 return <ToolDivider key={block.key} count={block.count} />
@@ -231,7 +253,7 @@ function HistoryFold(props: {
       >
         <History className='size-4 shrink-0' aria-hidden='true' />
         <span>
-          {t('Session opening history ({{count}} messages)', {
+          {t('Client-supplied history ({{count}} messages)', {
             count: props.messages.length,
           })}
           {props.summary ? ` — ${props.summary}` : ''}
@@ -255,9 +277,7 @@ function TimeSeparator(props: { prev: number; at: number }) {
   const prev = dayjs.unix(props.prev)
   const at = dayjs.unix(props.at)
   const crossDay = !prev.isSame(at, 'day')
-  const label = crossDay
-    ? at.format('YYYY-MM-DD HH:mm')
-    : at.format('HH:mm')
+  const label = crossDay ? at.format('YYYY-MM-DD HH:mm') : at.format('HH:mm')
   return (
     <div className='text-muted-foreground/70 flex items-center gap-2 py-1 text-xs'>
       <Separator className='flex-1' />

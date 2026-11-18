@@ -55,6 +55,15 @@ export interface AuditFilters {
   request_id?: string
 }
 
+export interface ReadingPart {
+  role: string
+  kind: string
+  origin: string
+  item: number
+  part: number
+  text: string
+  truncated?: boolean
+}
 export interface ConversationDetail {
   record: {
     request_id: string
@@ -74,6 +83,7 @@ export interface ConversationDetail {
   content: {
     request: string
     response: string
+    reading?: { input: ReadingPart[] | null; replies: ReadingPart[] | null }
     latest_input: string
     output: string
   }

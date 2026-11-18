@@ -14,7 +14,7 @@ detail dialog is open and discards its query cache on unmount.
 
 Responses records additionally expose a conversation replay tab. Explicit
 `response.id` / `previous_response_id` links are followed only within the same
-user. Each selected turn shows its ancestor path; sibling branches remain
+user and token. Each selected turn shows its ancestor path; sibling branches remain
 separate. Full client-supplied input history is rendered as a standalone snapshot
 when there is no link. Text similarity and time proximity never join requests.
 The replay shows instructions, user/assistant messages, tool calls/results and
@@ -69,46 +69,40 @@ become visible after a request/turn ends; historical bodies cannot be recovered.
 
 ## Session audit model (default)
 
-`CONVERSATION_LOG_MODE=session` converges per-request records into one timeline
-per conversation. Three tables in the primary database:
+The garow.10 reader uses `conversation_sessions_v2` and `conversation_messages_v2`.
+Both the legacy request dialog and the session reader use the same server-side
+projection. Input roles, content part positions, capture time and original
+request IDs are retained. Known IDE wrapper material is separated from request
+text. Unrecognised structured material stays explicitly unverified. Client
+history is shown as a snapshot, including assistant text supplied by the
+client: its timestamp is when the gateway saw it, not when someone typed it.
+A user role alone does not establish human authorship.
 
-- `conversation_sessions` — metadata skeleton (user, token, model, source,
-  counts, `updated_at`). No bodies.
-- `conversation_messages` — append-only visible utterances. Each user message
-  and each assistant text is stored once; `request_id` provides provenance.
-  Tool/skill/command execution details and reasoning are never stored; only a
-  per-request `tool_calls` count remains for reading-view dividers.
-- `conversation_logs` — the request ledger. In session mode `payload` is NULL
-  once `CONVERSATION_LOG_PAYLOAD=off`; metadata, outcome and counts remain.
+Within one user and token, a unique previous response or a nonconflicting typed
+conversation/session identifier can establish continuity. A linked incremental
+question does not require a repeated transcript. Without a strong identifier
+only an unambiguous forward extension of substantive user messages is eligible.
+Cache keys, account metadata, shared IDE templates and shorter common prefixes
+do not establish identity. Unattributed fragments remain individually accessible
+through the list filter. The default text search excludes context and unknown
+material. Tool-only ledger rows remain visible. Final-reply labels require an
+explicit final phase on a completed, untruncated response. Missing phases,
+interruptions and legacy output with no verifiable source are distinguished;
+a reasoning summary is never substituted for an answer.
 
-Session identity is deterministic, never text similarity or time proximity:
-explicit client identifiers (`prompt_cache_key`, `session_id`, `conversation_id`,
-`metadata.user_id`), then Responses `previous_response_id` links, then a
-positional user-message hash prefix chain within the same user+token. A diverging
-history (compaction/edit/branch) starts a child session linked to its parent;
-old messages are never rewritten. User-role items that look like injected IDE
-context are stored but labelled `kind=context` and collapsed in the UI.
+A startup worker builds the versioned projection in request order and resumes
+using separate `replay_*` columns on the ledger. It leaves original payload
+bytes and v1 mappings unchanged; when the original input is unavailable it can
+keep surviving v1 text as unverified evidence. A request without usable text
+can remain unassigned. New dual-written archives record visible output part
+boundaries without duplicating their text. V1 tables and both sets of messages
+remain under the existing retention policy. This release does not change the
+configured retention period or end the legacy dual-write transition.
 
-Request parsing is separated from storage: the body is parsed up to
-`CONVERSATION_LOG_PARSE_MAX_BYTES` but only extracted text is kept, so oversized
-requests no longer lose the user message. Responses are parsed incrementally
-(SSE/WS line events), keeping memory O(visible text); reasoning deltas never
-enter the text budget. A turn whose request side is unrecoverable but whose
-assistant text survives is kept in a per-user `source=residual` catch-all session
-rather than dropped.
-
-Root-session-only endpoints (PAT denied, `no-store`):
-`GET /api/conversations/sessions`, `GET /api/conversations/sessions/:id`
-(paginated messages + ledger; opening writes a `conversation.session_view` audit
-event), `GET /api/conversations/messages/search` (escaped LIKE),
-`GET /api/conversations/requests/:request_id` (ledger metadata). The legacy
-`/api/conversation/:request_id[/thread]` body endpoints remain for retained legacy
-payloads during the dual-write transition.
-
-On startup a mutex-serialized, idempotent backfill maps retained legacy payload
-rows into the session model (state markers `linked`/`unassigned`/`error`); it never
-rewrites legacy bodies and resumes safely after interruption. Retention cleanup
-cascades sessions → messages and expires the ledger by `created_at`.
+All four session endpoints remain root-browser-session-only, reject PATs and
+return no-store: `/api/conversations/sessions`, `/api/conversations/sessions/:id`,
+`/api/conversations/messages/search` and `/api/conversations/requests/:request_id`.
+The legacy request and thread endpoints remain available under the same gate.
 
 ## Validation
 
