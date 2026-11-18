@@ -1,10 +1,11 @@
 package service
 
 import (
-	"github.com/QuantumNous/new-api/model"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	"github.com/QuantumNous/new-api/model"
+	"github.com/stretchr/testify/require"
 )
 
 func TestQAEvidencePreservesVisibleBlocksWithGaps(t *testing.T) {
@@ -30,11 +31,13 @@ func TestQAEvidenceLongStreamRetainsShortTerminal(t *testing.T) {
 }
 
 func TestQAEvidenceMasksCredentialsBeforePersistence(t *testing.T) {
-	raw := "prefix\\nAuthorization: Bearer synthetic-example\\npassword='invented' end"
-
+	raw := "prefix\nAuthorization: Bearer synthetic-example\npassword='invented' end"
 	f := qaRequest(map[string]any{"input": raw}, nil, "", "responses")
-	require.NotContains(t, f.Prompt, "invented")
-	require.NotContains(t, f.Prompt, "synthetic-example")
-	require.Contains(t, f.Prompt, "prefix")
+	require.Equal(t, "prefix\nAuthorization: [redacted]\npassword=\"[redacted]\" end", f.Prompt)
 	require.Equal(t, "redacted", f.InputState)
+	again, changed := model.MaskQACredentials(f.Prompt)
+	require.Equal(t, f.Prompt, again)
+	require.False(t, changed)
+	text, _ := model.MaskQACredentials("Cookie:\nordinary next line")
+	require.Equal(t, "Cookie:\nordinary next line", text)
 }
