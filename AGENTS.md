@@ -16,6 +16,8 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - **Extensions**: JavaScript task plugins executed by moejs; Electron desktop wrapper
 - **Frontend package manager**: Bun (preferred over npm/yarn/pnpm)
 
+Garow conversation evidence readers require a live root browser session. Keep folding in the reading view, retain request identity, and never persist raw wire payloads to ordinary logs. See [the audit contract](docs/conversation-qa.md).
+
 ## Architecture
 
 - The Go gateway handles management APIs, upstream relay, billing, and background tasks across `router/`, `middleware/`, `controller/`, `service/`, `model/`, and `relay/`.

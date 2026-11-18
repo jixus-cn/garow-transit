@@ -59,6 +59,8 @@ func (QAEdge) TableName() string { return "conversation_qa_edges" }
 
 type QAFacts struct {
 	Client, Chat, Submission, Parent, Response, Prompt, Final string
+	InputState, OutputState, Parts                            string
+	HTTPStatus                                                int
 	Returned, Issued                                          []string
 	Unclear, Missing                                          bool
 }
@@ -84,180 +86,192 @@ func StoreQA(entry QARequestMeta, f QAFacts, cutoff int64) error {
 		if err := tx.Model(&QAReceipt{}).Where("request_id = ?", entry.RequestId).Count(&done).Error; err != nil || done != 0 {
 			return err
 		}
-		scope := qaDigest(fmt.Sprint(entry.UserId), fmt.Sprint(entry.TokenId), f.Client)
-		chat := ""
-		if f.Chat != "" {
-			chat = qaDigest(scope, "chat", f.Chat)
-		}
-		r := QAReceipt{RequestId: entry.RequestId, Scope: scope, CreatedAt: entry.CreatedAt, State: "no_turn"}
-		var parent, turn, submitted QATurn
-		var sub *string
-		if f.Submission != "" {
-			digest := qaDigest(scope, chat, "submission", f.Submission)
-			sub = &digest
-			err := tx.Where("submission = ?", digest).Take(&submitted).Error
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-		}
-
-		var refs []QAEdge
-		conflict, missing := false, false
-		inputs := make([]string, 0, len(f.Returned)+1)
-		if f.Parent != "" {
-			inputs = append(inputs, qaDigest(scope, "response", f.Parent))
-		}
-		for _, v := range f.Returned {
-			inputs = append(inputs, qaDigest(scope, "tool", v))
-		}
-		for _, k := range inputs {
-			var edges []QAEdge
-			if err := tx.Where("edge_hash = ? AND created_at >= ?", k, cutoff).Limit(2).Find(&edges).Error; err != nil {
-				return err
-			}
-			if len(edges) == 0 {
-				missing = true
-				continue
-			}
-			if len(edges) != 1 {
-				conflict = true
-				continue
-			}
-			edge := edges[0]
-			if len(refs) > 0 && refs[0].TurnId != edge.TurnId {
-				conflict = true
-			}
-			refs = append(refs, edge)
-		}
-		if len(refs) > 0 && !conflict && !missing {
-			e := tx.Where("id = ? AND scope = ? AND created_at >= ?", refs[0].TurnId, scope, cutoff).Take(&parent).Error
-			if errors.Is(e, gorm.ErrRecordNotFound) {
-				missing = true
-			} else if e != nil {
-				return e
-			}
-			if chat != "" && parent.ChatBasis == "client" && parent.ChatKey != chat {
-				conflict = true
-			}
-		}
-		if f.Prompt != "" && !f.Unclear && entry.CreatedAt >= cutoff {
-			turn = submitted
-			if turn.Id != 0 && (turn.Prompt != f.Prompt || turn.CreatedAt < cutoff) {
-				r.State = "ambiguous"
-				return tx.Create(&r).Error
-			}
-			if turn.Id == 0 {
-				turn = QATurn{Scope: scope, UserId: entry.UserId, TokenId: entry.TokenId, ChatKey: chat, FirstRequest: entry.RequestId, Submission: sub, Prompt: f.Prompt, CreatedAt: entry.CreatedAt, UpdatedAt: entry.CreatedAt, AnswerState: "pending"}
-				if chat != "" {
-					turn.ChatBasis = "client"
-				}
-				if parent.Id != 0 && !conflict && !missing {
-					if chat == "" {
-						turn.ChatKey, turn.ChatBasis = parent.ChatKey, parent.ChatBasis
-						if turn.ChatKey == "" {
-							turn.ChatKey, turn.ChatBasis = qaDigest(scope, "chain", parent.FirstRequest), "parent"
-						}
-					}
-					if err := assignQAChat(tx, parent, turn.ChatKey, turn.ChatBasis); err != nil {
-						return err
-					}
-				}
-				if err := tx.Create(&turn).Error; err != nil {
-					return err
-				}
-				r.Basis = "direct"
-			} else {
-				r.Basis = "submission"
-			}
-		} else if submitted.Id != 0 && len(inputs) == 0 && !f.Unclear && !f.Missing && submitted.CreatedAt >= cutoff {
-			turn = submitted
-			r.Basis = "submission"
-		} else if parent.Id != 0 && (submitted.Id == 0 || submitted.Id == parent.Id) && !conflict && !missing && !f.Unclear && !f.Missing {
-			turn = parent
-			r.Basis = "parent"
-			if len(f.Returned) > 0 {
-				r.Basis = "tool"
-			}
-			// A tool result belongs only to the request that consumes it. A competing
-			// continuation with a different final invalidates the pair, never overwrites it.
-			for _, e := range refs {
-				if e.Tool && e.ConsumedBy != "" && e.ConsumedBy != entry.RequestId {
-					conflict = true
-				}
-			}
-			if conflict {
-				if f.Final != "" && turn.AnswerState == "answered" && turn.Final != f.Final {
-					if err := tx.Model(&turn).Updates(map[string]any{"final": "", "answer_state": "ambiguous"}).Error; err != nil {
-						return err
-					}
-				}
-				r.State = "ambiguous"
-				return tx.Create(&r).Error
-			}
-			if chat != "" {
-				if err := assignQAChat(tx, turn, chat, "client"); err != nil {
-					return err
-				}
-			}
-			for _, e := range refs {
-				if !e.Tool {
-					continue
-				}
-				if err := tx.Model(&QAEdge{}).Where("edge_hash = ? AND request_id = ?", e.Key, e.RequestId).Update("consumed_by", entry.RequestId).Error; err != nil {
-					return err
-				}
-			}
-		}
-		if turn.Id == 0 {
-			switch {
-			case conflict || f.Unclear:
-				r.State = "ambiguous"
-			case f.Final != "":
-				r.State = "orphan_final"
-			case f.Missing:
-				r.State = "unavailable"
-			}
-		} else {
-			r.State, r.TurnId = "linked", turn.Id
-			updates := map[string]any{"updated_at": max(entry.CreatedAt, turn.UpdatedAt)}
-			var pending int64
-			if f.Final != "" {
-				if err := tx.Model(&QAEdge{}).Where("turn_id = ? AND tool = ? AND consumed_by = ?", turn.Id, true, "").Count(&pending).Error; err != nil {
-					return err
-				}
-			}
-			if f.Final != "" && pending == 0 && turn.AnswerState != "ambiguous" {
-				if turn.Final != "" && turn.Final != f.Final {
-					updates["final"], updates["answer_state"] = "", "ambiguous"
-				} else {
-					updates["final"], updates["answer_state"] = f.Final, "answered"
-				}
-			}
-			if err := tx.Model(&turn).Updates(updates).Error; err != nil {
-				return err
-			}
-			issued := make([]string, 0, len(f.Issued)+1)
-			responseKey := qaDigest(scope, "response", f.Response)
-			if f.Response != "" {
-				issued = append(issued, responseKey)
-			}
-			for _, v := range f.Issued {
-				k := qaDigest(scope, "tool", v)
-				if !slices.Contains(issued, k) {
-					issued = append(issued, k)
-				}
-			}
-			for _, k := range issued {
-				if err := tx.Create(&QAEdge{Key: k, Tool: k != responseKey, RequestId: entry.RequestId, TurnId: turn.Id, CreatedAt: entry.CreatedAt}).Error; err != nil {
-					return err
-				}
-			}
-		}
-		return tx.Create(&r).Error
+		return projectQA(tx, entry, f, cutoff, 0, false, func(r QAReceipt, t QATurn) error { return tx.Create(&r).Error })
 	})
 }
+func projectQA(tx *gorm.DB, entry QARequestMeta, f QAFacts, cutoff, existing int64, track bool, save func(QAReceipt, QATurn) error) error {
+	scope := qaDigest(fmt.Sprint(entry.UserId), fmt.Sprint(entry.TokenId), f.Client)
+	chat := ""
+	if f.Chat != "" {
+		chat = qaDigest(scope, "chat", f.Chat)
+	}
+	r := QAReceipt{RequestId: entry.RequestId, Scope: scope, CreatedAt: entry.CreatedAt, State: "no_turn"}
+	var parent, turn, submitted QATurn
+	var sub *string
+	if f.Submission != "" {
+		digest := qaDigest(scope, chat, "submission", f.Submission)
+		sub = &digest
+		err := tx.Where("submission = ?", digest).Take(&submitted).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	}
 
-func assignQAChat(tx *gorm.DB, t QATurn, key, basis string) error {
+	var refs []QAEdge
+	conflict, missing := false, false
+	inputs := make([]string, 0, len(f.Returned)+1)
+	if f.Parent != "" {
+		inputs = append(inputs, qaDigest(scope, "response", f.Parent))
+	}
+	for _, v := range f.Returned {
+		inputs = append(inputs, qaDigest(scope, "tool", v))
+	}
+	for _, k := range inputs {
+		var edges []QAEdge
+		if err := tx.Where("edge_hash = ? AND created_at >= ?", k, cutoff).Limit(2).Find(&edges).Error; err != nil {
+			return err
+		}
+		if len(edges) == 0 {
+			missing = true
+			continue
+		}
+		if len(edges) != 1 {
+			conflict = true
+			continue
+		}
+		edge := edges[0]
+		if len(refs) > 0 && refs[0].TurnId != edge.TurnId {
+			conflict = true
+		}
+		refs = append(refs, edge)
+	}
+	if len(refs) > 0 && !conflict && !missing {
+		e := tx.Where("id = ? AND scope = ? AND created_at >= ?", refs[0].TurnId, scope, cutoff).Take(&parent).Error
+		if errors.Is(e, gorm.ErrRecordNotFound) {
+			missing = true
+		} else if e != nil {
+			return e
+		}
+		if chat != "" && parent.ChatBasis == "client" && parent.ChatKey != chat {
+			conflict = true
+		}
+	}
+	if f.Prompt != "" && !f.Unclear && entry.CreatedAt >= cutoff {
+		turn = submitted
+		if existing != 0 && turn.Id == 0 {
+			if err := tx.Where("id = ? AND scope = ? AND created_at >= ?", existing, scope, cutoff).Take(&turn).Error; err != nil {
+				return err
+			}
+		}
+		if turn.Id != 0 && (turn.Prompt != f.Prompt || turn.CreatedAt < cutoff) {
+			r.State = "ambiguous"
+			return save(r, turn)
+		}
+		if turn.Id == 0 {
+			turn = QATurn{Scope: scope, UserId: entry.UserId, TokenId: entry.TokenId, ChatKey: chat, FirstRequest: entry.RequestId, Submission: sub, Prompt: f.Prompt, CreatedAt: entry.CreatedAt, UpdatedAt: entry.CreatedAt, AnswerState: "pending"}
+			if chat != "" {
+				turn.ChatBasis = "client"
+			}
+			if parent.Id != 0 && !conflict && !missing {
+				if chat == "" {
+					turn.ChatKey, turn.ChatBasis = parent.ChatKey, parent.ChatBasis
+					if turn.ChatKey == "" {
+						turn.ChatKey, turn.ChatBasis = qaDigest(scope, "chain", parent.FirstRequest), "parent"
+					}
+				}
+				if err := assignQAChat(tx, parent, turn.ChatKey, turn.ChatBasis, track); err != nil {
+					return err
+				}
+			}
+			if err := tx.Create(&turn).Error; err != nil {
+				return err
+			}
+			r.Basis = "direct"
+		} else if turn.FirstRequest == entry.RequestId {
+			r.Basis = "direct"
+		} else {
+			r.Basis = "submission"
+		}
+	} else if submitted.Id != 0 && len(inputs) == 0 && !f.Unclear && !f.Missing && submitted.CreatedAt >= cutoff {
+		turn = submitted
+		r.Basis = "submission"
+	} else if parent.Id != 0 && (submitted.Id == 0 || submitted.Id == parent.Id) && !conflict && !missing && !f.Unclear && !f.Missing {
+		turn = parent
+		r.Basis = "parent"
+		if len(f.Returned) > 0 {
+			r.Basis = "tool"
+		}
+		// A tool result belongs only to the request that consumes it. A competing
+		// continuation with a different final invalidates the pair, never overwrites it.
+		for _, e := range refs {
+			if e.Tool && e.ConsumedBy != "" && e.ConsumedBy != entry.RequestId {
+				conflict = true
+			}
+		}
+		if conflict {
+			if f.Final != "" && turn.AnswerState == "answered" && turn.Final != f.Final {
+				if err := tx.Model(&turn).Updates(map[string]any{"answer_state": "ambiguous"}).Error; err != nil {
+					return err
+				}
+			}
+			r.State = "ambiguous"
+			return save(r, turn)
+		}
+		if chat != "" {
+			if err := assignQAChat(tx, turn, chat, "client", track); err != nil {
+				return err
+			}
+		}
+		for _, e := range refs {
+			if !e.Tool {
+				continue
+			}
+			if err := tx.Model(&QAEdge{}).Where("edge_hash = ? AND request_id = ?", e.Key, e.RequestId).Update("consumed_by", entry.RequestId).Error; err != nil {
+				return err
+			}
+		}
+	}
+	if turn.Id == 0 {
+		switch {
+		case conflict:
+			r.State = "ambiguous"
+		case f.Final != "":
+			r.State = "orphan_final"
+		case f.Unclear:
+			r.State = "ambiguous"
+		case f.Missing:
+			r.State = "unavailable"
+		}
+	} else {
+		r.State, r.TurnId = "linked", turn.Id
+		updates := map[string]any{"updated_at": max(entry.CreatedAt, turn.UpdatedAt)}
+		var pending int64
+		if f.Final != "" {
+			if err := tx.Model(&QAEdge{}).Where("turn_id = ? AND tool = ? AND consumed_by = ?", turn.Id, true, "").Count(&pending).Error; err != nil {
+				return err
+			}
+		}
+		if f.Final != "" && pending == 0 && turn.AnswerState != "ambiguous" {
+			if turn.Final != "" && turn.Final != f.Final {
+				updates["answer_state"] = "ambiguous"
+			} else {
+				updates["final"], updates["answer_state"] = f.Final, "answered"
+			}
+		}
+		if err := tx.Model(&turn).Updates(updates).Error; err != nil {
+			return err
+		}
+		issued := make([]string, 0, len(f.Issued)+1)
+		responseKey := qaDigest(scope, "response", f.Response)
+		if f.Response != "" {
+			issued = append(issued, responseKey)
+		}
+		for _, v := range f.Issued {
+			k := qaDigest(scope, "tool", v)
+			if !slices.Contains(issued, k) {
+				issued = append(issued, k)
+			}
+		}
+		for _, k := range issued {
+			if err := tx.Create(&QAEdge{Key: k, Tool: k != responseKey, RequestId: entry.RequestId, TurnId: turn.Id, CreatedAt: entry.CreatedAt}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return save(r, turn)
+}
+
+func assignQAChat(tx *gorm.DB, t QATurn, key, basis string, track bool) error {
 	if key == "" || t.ChatKey == key {
 		return nil
 	}
@@ -268,6 +282,18 @@ func assignQAChat(tx *gorm.DB, t QATurn, key, basis string) error {
 		q = q.Where("chat_key = ?", t.ChatKey)
 	} else {
 		return nil
+	}
+	if track {
+		var targets []QATurn
+		if err := q.Select("id, user_id, created_at, first_request").Find(&targets).Error; err != nil {
+			return err
+		}
+		for _, v := range targets {
+			e := QAEvidence{Phase: "link", RequestId: qaDigest(v.FirstRequest, key, basis), TurnId: v.Id, UserId: v.UserId, CreatedAt: v.CreatedAt, ChatKey: key, ChatBasis: basis}
+			if err := tx.Create(&e).Error; err != nil {
+				return err
+			}
+		}
 	}
 	return q.Updates(map[string]any{"chat_key": key, "chat_basis": basis}).Error
 }
@@ -326,7 +352,8 @@ func QAChats(f QAFilter, page, size int) ([]QAChatRow, int64, error) {
 		}
 		previews := map[int64]string{}
 		for _, t := range ts {
-			r := []rune(t.Prompt)
+			safe, _ := MaskQACredentials(t.Prompt)
+			r := []rune(safe)
 			previews[t.Id] = string(r[:min(len(r), 80)])
 		}
 		names := ConversationUsernames(users)
@@ -352,6 +379,13 @@ func QATurns(f QAFilter, key string, page, size int) ([]QATurn, int64, error) {
 		order = "created_at DESC, id DESC"
 	}
 	err := q.Order(order).Offset((page - 1) * size).Limit(size).Find(&rows).Error
+	for i := range rows {
+		rows[i].Prompt, _ = MaskQACredentials(rows[i].Prompt)
+		rows[i].Final, _ = MaskQACredentials(rows[i].Final)
+		if rows[i].AnswerState == "ambiguous" {
+			rows[i].Final = ""
+		}
+	}
 	return rows, n, err
 }
 func QAByRequest(id string, cutoff int64) (*QATurn, error) {
@@ -366,6 +400,11 @@ func QAByRequest(id string, cutoff int64) (*QATurn, error) {
 	err := DB.Where("id = ? AND scope = ? AND created_at >= ?", r.TurnId, r.Scope, cutoff).Take(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
+	}
+	t.Prompt, _ = MaskQACredentials(t.Prompt)
+	t.Final, _ = MaskQACredentials(t.Final)
+	if t.AnswerState == "ambiguous" {
+		t.Final = ""
 	}
 	return &t, err
 }
@@ -395,6 +434,7 @@ func ConversationCutoff() int64 {
 }
 
 type QARequestMeta struct {
+	Protocol        string
 	RequestId       string
 	UserId, TokenId int
 	CreatedAt       int64
@@ -410,7 +450,7 @@ func CleanupConversations(cutoff int64) error {
 		if err := tx.Where("turn_id IN (?)", expired).Delete(&QAEdge{}).Error; err != nil {
 			return err
 		}
-		for _, table := range []any{&QAEdge{}, &QAReceipt{}, &QATurn{}} {
+		for _, table := range []any{&QAEvidence{}, &QAEdge{}, &QAReceipt{}, &QATurn{}} {
 			if err := tx.Where("created_at < ?", cutoff).Delete(table).Error; err != nil {
 				return err
 			}

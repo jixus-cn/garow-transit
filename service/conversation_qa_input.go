@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/QuantumNous/new-api/common"
 	"net/http"
 	"slices"
 	"strings"
@@ -15,88 +16,6 @@ func qaID(v any) string {
 		return ""
 	}
 	return s
-}
-
-// A wrapper is evidence only at a content boundary. Never search a user's code
-// or prose for instructions. The playground supplies an explicit user boundary.
-func qaUserPart(s string, controlled bool) (string, bool) {
-	if controlled {
-		return s, true
-	}
-	lead := strings.TrimLeft(s, " \t\r\n")
-	for _, name := range []string{"user_query", "user_request", "task"} {
-		if inner, ok := strings.CutPrefix(lead, "<"+name+">"); ok {
-			inner, after, closed := strings.Cut(inner, "</"+name+">")
-			if !closed || strings.TrimSpace(after) != "" {
-				return "", false
-			}
-			inner = strings.TrimPrefix(strings.TrimPrefix(inner, "\r"), "\n")
-			return strings.TrimSuffix(strings.TrimSuffix(inner, "\n"), "\r"), true
-		}
-	}
-	for _, prefix := range []string{"Another language model started to solve this problem and produced a summary", "This session is being continued from a previous conversation that ran out of context", "<user_action>", "<command-name>", "<local-command-", "<system-reminder", "<environment_details", "<environment_context", "<subagent_notification", "<permissions instructions", "<app-context", "<ide_opened_file", "<ide_selection", "<user_instructions", "<skills_instructions"} {
-		if strings.HasPrefix(lead, prefix) {
-			// A known complete structural wrapper can precede a real submission in
-			// the same text part. The common splitter handles that case below.
-			if !strings.Contains(lead, "</") || !strings.HasPrefix(prefix, "<") {
-				return "", true
-			}
-			break
-		}
-	}
-	parts := model.ConversationQAParts(s)
-	if strings.HasPrefix(lead, "<") && len(parts) > 0 && parts[0].Kind == "text" && strings.Contains(strings.SplitN(lead, "\n", 2)[0], ">") {
-		return "", false
-	}
-	var keep []string
-	for _, p := range parts {
-		switch p.Kind {
-		case "unknown":
-			return "", false
-		case "text":
-			keep = append(keep, p.Text)
-		}
-	}
-	return strings.Join(keep, "\n"), true
-}
-
-func qaUserContent(content any, controlled bool) (string, bool) {
-	var values []string
-	switch v := content.(type) {
-	case string:
-		values = []string{v}
-	case []any:
-		for _, r := range v {
-			switch p := r.(type) {
-			case string:
-				values = append(values, p)
-			case map[string]any:
-				switch p["type"] {
-				case "input_text", "text":
-					values = append(values, qaString(p["text"]))
-				case "image_url", "input_image", "input_file", "file", "input_audio":
-					continue
-				default:
-					return "", false
-				}
-			default:
-				return "", false
-			}
-		}
-	default:
-		return "", false
-	}
-	var texts []string
-	for _, s := range values {
-		t, known := qaUserPart(s, controlled)
-		if !known {
-			return "", false
-		}
-		if strings.TrimSpace(t) != "" {
-			texts = append(texts, t)
-		}
-	}
-	return strings.Join(texts, "\n"), true
 }
 
 func qaReturned(m map[string]any) (string, bool) {
@@ -119,10 +38,7 @@ func qaRequest(req map[string]any, h http.Header, path, kind string) model.QAFac
 	if nested, ok := req["response"].(map[string]any); ok {
 		req = nested
 	}
-	if req["generate"] == false || h.Get("X-OpenAI-Subagent") != "" || h.Get("X-OpenAI-Memgen-Request") != "" {
-		f.Missing = true
-		return f
-	}
+	aux := req["generate"] == false || h.Get("X-OpenAI-Subagent") != "" || h.Get("X-OpenAI-Memgen-Request") != ""
 	controlled := path == "/pg/chat/completions" && qaID(h.Get("X-Garow-Chat-Id")) != "" && qaID(h.Get("X-Garow-Submission-Id")) != ""
 	if controlled {
 		f.Client = "playground"
@@ -172,16 +88,14 @@ func qaRequest(req map[string]any, h http.Header, path, kind string) model.QAFac
 	if value == nil {
 		value = req["messages"]
 	}
+	var parts qaInput
 	switch v := value.(type) {
 	case string:
-		f.Prompt, _ = qaUserContent(v, controlled)
-		if f.Prompt == "" {
-			f.Unclear = true
-		}
+		parts.add(v, 0, 0)
 	case map[string]any:
-		qaSuffix(&f, []any{v}, controlled)
+		qaSuffix(&f, &parts, []any{v}, controlled)
 	case []any:
-		qaSuffix(&f, v, controlled)
+		qaSuffix(&f, &parts, v, controlled)
 	case nil:
 		if f.Parent == "" && f.Submission == "" {
 			f.Missing = true
@@ -189,28 +103,43 @@ func qaRequest(req map[string]any, h http.Header, path, kind string) model.QAFac
 	default:
 		f.Missing = true
 	}
-	if len(f.Prompt) > 1<<20 {
-		f.Prompt = ""
-		f.Missing = true
+	f.Prompt = parts.text.String()
+	if len(parts.spans) > 0 {
+		raw, _ := common.Marshal(parts.spans)
+		f.Parts = string(raw)
+	}
+	switch {
+	case parts.partial:
+		f.InputState = "partial"
+	case parts.redacted:
+		f.InputState = "redacted"
+	case f.Prompt != "" && aux:
+		f.InputState = "client_aux"
+	case f.Prompt != "":
+		f.InputState = "text"
+	case f.Missing:
+		f.InputState = "unavailable"
+	case len(f.Returned) > 0:
+		f.InputState = "continuation"
+	default:
+		f.InputState = "no_new_input"
 	}
 	return f
 }
 
-// Only the suffix after the last assistant/tool boundary can be a new send.
-// A replay ending in a tool result must never resurrect an earlier question.
-func qaSuffix(f *model.QAFacts, items []any, controlled bool) {
-	if len(items) == 0 {
-		return
-	}
-	var prompts []string
+// Only the user-side suffix is newly observed input. Historical transcript entries
+// and actual tool results are never copied into a new question.
+func qaSuffix(f *model.QAFacts, parts *qaInput, items []any, controlled bool) {
+	start := len(items)
+	users := 0
 	for i := len(items) - 1; i >= 0; i-- {
 		m, ok := items[i].(map[string]any)
 		if !ok {
-			f.Unclear = true
-			return
+			parts.partial = true
+			break
 		}
 		if id, tool := qaReturned(m); tool {
-			if len(prompts) > 0 {
+			if users > 0 {
 				break
 			}
 			if id == "" || len(f.Returned) >= 128 {
@@ -227,30 +156,53 @@ func qaSuffix(f *model.QAFacts, items []any, controlled bool) {
 		}
 		switch m["role"] {
 		case "user":
-			s, known := qaUserContent(m["content"], controlled)
-			if !known {
-				f.Unclear = true
-				return
+			users++
+			start = i
+			if controlled {
+				i = -1
 			}
-			if s != "" {
-				prompts = append(prompts, s)
-				if controlled {
-					f.Prompt = s
-					return
-				}
-			}
-			continue
 		case "system", "developer":
 			continue
+		default:
+			i = -1
 		}
-		break
 	}
-	if len(prompts) == 1 {
-		f.Prompt = prompts[0]
-	} else if len(prompts) > 1 {
-		f.Unclear = true
+	for i := start; i < len(items); i++ {
+		m, ok := items[i].(map[string]any)
+		if !ok || m["role"] != "user" {
+			continue
+		}
+		switch v := m["content"].(type) {
+		case string:
+			parts.add(v, i, 0)
+		case []any:
+			for j, raw := range v {
+				switch p := raw.(type) {
+				case string:
+					parts.add(p, i, j)
+				case map[string]any:
+					switch p["type"] {
+					case "input_text", "text":
+						t, ok := p["text"].(string)
+						if ok {
+							parts.add(t, i, j)
+						} else {
+							parts.gap(i, j, "unsupported")
+						}
+					case "image_url", "input_image", "input_file", "file", "input_audio":
+						parts.gap(i, j, "attachment")
+					default:
+						parts.gap(i, j, "unsupported")
+					}
+				default:
+					parts.gap(i, j, "unsupported")
+				}
+			}
+		default:
+			parts.gap(i, 0, "unsupported")
+		}
 	}
-	if len(f.Returned) == 0 && f.Prompt == "" {
+	if users == 0 && len(f.Returned) == 0 && f.Parent == "" && f.Submission == "" {
 		f.Unclear = true
 	}
 }

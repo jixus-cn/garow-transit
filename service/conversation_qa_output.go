@@ -13,43 +13,54 @@ import (
 // candidates are retained in memory. Commentary, arguments and tool results
 // are never sent to the writer.
 type qaCapture struct {
-	facts                                                              model.QAFacts
-	limit, seen                                                        int
-	ws, framed, overflow, invalid, failed, terminal, hasTool, chatStop bool
-	buf                                                                []byte
-	responseID, final                                                  string
-	chat                                                               strings.Builder
-	issued                                                             []string
-	doneItems                                                          map[int]map[string]any
+	facts                                                                       model.QAFacts
+	limit, candidateBytes                                                       int
+	ws, decided, framed, overflow, invalid, failed, terminal, hasTool, chatStop bool
+	buf                                                                         []byte
+	responseID, final                                                           string
+	chat                                                                        strings.Builder
+	issued                                                                      []string
+	doneItems                                                                   map[int]map[string]any
 }
 
 func (q *qaCapture) write(p []byte) {
 	if q.overflow {
 		return
 	}
-	q.seen += len(p)
-	if q.seen > q.limit {
-		q.overflow = true
-		q.buf = nil
-		return
-	}
-	q.buf = append(q.buf, p...)
-	if !q.framed && !q.ws {
-		s := bytes.TrimSpace(q.buf)
-		if len(s) == 0 || s[0] == '{' || s[0] == '[' {
+	if !q.decided && !q.ws {
+		first := bytes.TrimLeft(p, " \t\n\r")
+		if len(first) == 0 {
 			return
 		}
-		q.framed = true
+		q.decided = true
+		q.framed = first[0] != '{' && first[0] != '['
 	}
-	for {
-		line, next, ok := bytes.Cut(q.buf, []byte{'\n'})
-		if !ok {
-			break
+	if !q.framed && !q.ws {
+		if len(q.buf)+len(p) > q.limit {
+			q.overflow = true
+			q.buf = nil
+			return
 		}
-		q.line(line)
-		q.buf = next
+		q.buf = append(q.buf, p...)
+		return
+	}
+	for len(p) > 0 {
+		line, rest, ok := bytes.Cut(p, []byte{'\n'})
+		if len(line)+len(q.buf) > q.limit {
+			q.overflow = true
+			q.buf = nil
+			return
+		}
+		q.buf = append(q.buf, line...)
+		if !ok {
+			return
+		}
+		q.line(q.buf)
+		q.buf = q.buf[:0]
+		p = rest
 	}
 }
+
 func (q *qaCapture) finishWire() {
 	if len(bytes.TrimSpace(q.buf)) != 0 {
 		q.line(q.buf)
@@ -214,6 +225,11 @@ func (q *qaCapture) event(e map[string]any) {
 		} else if q.terminal && s != "" {
 			q.invalid = true
 		}
+		if q.chat.Len()+len(s) > qaTextLimit {
+			q.overflow = true
+			q.chat.Reset()
+			return
+		}
 		q.chat.WriteString(s)
 		if reason := qaString(c["finish_reason"]); reason != "" {
 			if q.terminal && q.chatStop != (reason == "stop") {
@@ -245,7 +261,22 @@ func (q *qaCapture) event(e map[string]any) {
 			if m["phase"] == "commentary" {
 				q.doneItems[i] = map[string]any{"type": "message", "role": "assistant", "phase": "commentary"}
 			} else {
-				q.doneItems[i] = m
+				answer, eligible := qaTerminalMessage([]any{m})
+				if !eligible {
+					q.doneItems[i] = map[string]any{"type": "message", "role": "invalid"}
+				} else {
+					if old := q.doneItems[i]; old != nil {
+						previous, _ := qaTerminalMessage([]any{old})
+						q.candidateBytes -= len(previous)
+					}
+					q.candidateBytes += len(answer)
+					if q.candidateBytes > qaTextLimit {
+						q.overflow = true
+						q.doneItems = nil
+						return
+					}
+					q.doneItems[i] = map[string]any{"type": "message", "role": "assistant", "phase": m["phase"], "content": []any{map[string]any{"type": "output_text", "text": answer}}}
+				}
 			}
 		}
 	}
@@ -288,21 +319,47 @@ func (q *qaCapture) event(e map[string]any) {
 	q.final = final
 }
 func (q *qaCapture) result(f *model.QAFacts, allowed bool) {
-	if !allowed || q.failed || q.overflow || q.invalid || !q.terminal {
+	switch {
+	case !allowed:
+		f.OutputState = "http_error"
+		return
+	case q.failed:
+		f.OutputState = "upstream_failed"
+		return
+	case q.overflow:
+		f.OutputState = "output_limit"
+		return
+	case q.invalid:
+		f.OutputState = "invalid_output"
+		return
+	case !q.terminal:
+		f.OutputState = "no_terminal"
 		return
 	}
 	f.Response = q.responseID
 	f.Issued = q.issued
 	if q.hasTool {
+		f.OutputState = "continuation"
 		return
 	}
 	s := q.final
 	if q.chatStop {
 		s = q.chat.String()
 	}
-	if len(s) <= 1<<20 && strings.TrimSpace(s) != "" {
-		f.Final = s
+	switch {
+	case len(s) > qaTextLimit:
+		f.OutputState = "output_limit"
+	case strings.TrimSpace(s) == "":
+		f.OutputState = "no_final"
+	default:
+		var masked bool
+		f.Final, masked = model.MaskQACredentials(s)
+		f.OutputState = "final"
+		if masked {
+			f.OutputState = "final_redacted"
+		}
 	}
+
 }
 
 func eventInt(v any, otherwise int) int {

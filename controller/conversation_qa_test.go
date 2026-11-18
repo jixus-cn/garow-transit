@@ -58,14 +58,14 @@ func TestConversationQAStorageMatrix(t *testing.T) {
 			week := int64(7 * 24 * 3600)
 			for _, upgrade := range []bool{false, true} {
 				t.Run(fmt.Sprintf("upgrade=%v", upgrade), func(t *testing.T) {
-					tables := []any{&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}}
+					tables := []any{&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}, &model.QAEvidence{}}
 					for _, tab := range tables {
 						require.False(t, db.Migrator().HasTable(tab), "requires a dedicated empty database")
 					}
 					t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(tables...)) })
 					if upgrade {
-						// .11 uses exactly these QA schemas. Preserve a verified chat and an unassigned turn.
-						require.NoError(t, db.AutoMigrate(tables...))
+						// Upgrade the three actual pre-evidence QA tables; the new table must not exist yet.
+						require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}))
 						for _, tc := range []struct{ id, chat string }{{"known", "stable"}, {"old", ""}} {
 							require.NoError(t, model.StoreQA(model.QARequestMeta{RequestId: tc.id, UserId: 1, CreatedAt: now}, model.QAFacts{Chat: tc.chat, Prompt: "historical", Final: "retained"}, 0))
 						}
@@ -144,6 +144,7 @@ func TestConversationQAStorageMatrix(t *testing.T) {
 					require.Equal(t, oldChat, read("after-expiry").ChatKey)
 					_, e = model.QAByRequest("q1", now-week+1)
 					require.ErrorIs(t, e, gorm.ErrRecordNotFound)
+					checkEvidenceWindow(t, now)
 					for _, obsolete := range []string{"conversation_logs", "conversation_sessions_v2", "conversation_messages_v2"} {
 						require.False(t, db.Migrator().HasTable(obsolete))
 					}
@@ -163,7 +164,7 @@ func TestConversationQACaptureWriter(t *testing.T) {
 	before, logs := model.DB, model.LOG_DB
 	model.DB, model.LOG_DB = db, db
 	t.Cleanup(func() { model.DB, model.LOG_DB = before, logs; _ = sql.Close() })
-	require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}, &model.AuditLog{}, &model.User{}))
+	require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}, &model.QAEvidence{}, &model.AuditLog{}, &model.User{}))
 	service.StartConversationRecorder()
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"system","content":"excluded"},{"role":"user","content":"captured"}]}`))
@@ -192,7 +193,7 @@ func TestConversationQARootSessionRequired(t *testing.T) {
 	prev := model.DB
 	model.DB = db
 	t.Cleanup(func() { model.DB = prev; sql, _ := db.DB(); _ = sql.Close() })
-	require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}))
+	require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}, &model.QAEvidence{}))
 	require.NoError(t, model.StoreQA(model.QARequestMeta{RequestId: "request", CreatedAt: time.Now().Unix(), UserId: 1}, model.QAFacts{Prompt: "question", Final: "answer"}, 0))
 	for _, session := range []bool{false, true} {
 		w := httptest.NewRecorder()

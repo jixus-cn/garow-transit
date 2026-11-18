@@ -255,6 +255,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/conversations/sessions":     accessTokenSessionRule,
 	"GET /api/conversations/sessions/:id": accessTokenSessionRule,
 	"GET /api/conversations/unassigned":   accessTokenSessionRule,
+	"POST /api/conversations/evidence":    accessTokenSessionRule,
 	"POST /api/conversations/search":      accessTokenSessionRule,
 
 	// router/api-router.go: /api/group, /api/prefill_group

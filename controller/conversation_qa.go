@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -84,4 +85,26 @@ func SearchQA(c *gin.Context) {
 	if conversationRootSession(c) {
 		qaList(c, "search")
 	}
+}
+
+func GetQAEvidence(c *gin.Context) {
+	if !conversationRootSession(c) {
+		return
+	}
+	var f model.QAEvidenceFilter
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	if c.ShouldBindJSON(&f) != nil {
+		common.ApiErrorMsg(c, "Invalid conversation filters")
+		return
+	}
+	rows, err := model.ReadQAEvidence(f, model.ConversationCutoff())
+	if errors.Is(err, model.ErrEvidenceFilter) {
+		common.ApiErrorMsg(c, "Invalid conversation filters")
+		return
+	}
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	common.ApiSuccess(c, rows)
 }

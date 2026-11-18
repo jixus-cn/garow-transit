@@ -104,7 +104,7 @@ func TestConversationRecordingDistinguishesConcurrencyCleanupFromClientCancellat
 	setupDashboardAuthMiddlewareTest(t)
 	useRateLimitMiniRedis(t)
 	t.Setenv("CONVERSATION_LOG_ENABLED", "true")
-	require.NoError(t, model.DB.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}, &model.QAEvidence{}))
 	sqlDB, err := model.DB.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)

@@ -14,13 +14,13 @@ func TestQAInputBoundaries(t *testing.T) {
 		returned           []string
 		unclear            bool
 	}{
-		{"history and IDE", `{"input":[{"role":"user","content":"old"},{"role":"assistant","content":"old reply"},{"role":"user","content":[{"type":"input_text","text":"<environment_context>workspace</environment_context>"},{"type":"input_text","text":"  new\nraw  "}]}]}`, "  new\nraw  ", nil, false},
-		{"editor heading", `{"input":"# Context from my IDE setup:\nfile.go\n## My request for Codex:\nFix this."}`, "Fix this.", nil, false},
+		{"history and IDE", `{"input":[{"role":"user","content":"old"},{"role":"assistant","content":"old reply"},{"role":"user","content":[{"type":"input_text","text":"<environment_context>workspace</environment_context>"},{"type":"input_text","text":"  new\nraw  "}]}]}`, "<environment_context>workspace</environment_context>\n  new\nraw  ", nil, false},
+		{"editor heading", `{"input":"# Context from my IDE setup:\nfile.go\n## My request for Codex:\nFix this."}`, "# Context from my IDE setup:\nfile.go\n## My request for Codex:\nFix this.", nil, false},
 		{"only new tools", `{"input":[{"type":"function_call_output","call_id":"old"},{"role":"assistant","content":"history"},{"type":"function_call_output","call_id":"b"},{"type":"function_call_output","call_id":"a"}]}`, "", []string{"a", "b"}, false},
 		{"quote", `{"input":"Example: <environment_context>here</environment_context>"}`, "Example: <environment_context>here</environment_context>", nil, false},
-		{"mixed wrapper", `{"input":"<unknown>editor</unknown> maybe a question"}`, "", nil, true},
+		{"mixed wrapper", `{"input":"<unknown>editor</unknown> maybe a question"}`, "<unknown>editor</unknown> maybe a question", nil, false},
 		{"history only", `{"input":[{"role":"user","content":"old"},{"role":"assistant","content":"answer"}]}`, "", nil, true},
-		{"two unmarked prompts", `{"input":[{"role":"user","content":"first"},{"role":"user","content":"second"}]}`, "", nil, true},
+		{"two unmarked prompts", `{"input":[{"role":"user","content":"first"},{"role":"user","content":"second"}]}`, "first\nsecond", nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var r map[string]any
@@ -56,7 +56,7 @@ func TestQAThreadScopeIsNotCacheOrRequestIdentity(t *testing.T) {
 	h.Del("Thread-Id")
 	require.Empty(t, qaRequest(req, h, "/v1/responses", "responses").Chat)
 	h.Set("X-OpenAI-Subagent", "review")
-	require.Empty(t, qaRequest(req, h, "/v1/responses", "responses").Prompt)
+	require.Equal(t, "client_aux", qaRequest(req, h, "/v1/responses", "responses").InputState)
 }
 func TestQATerminalEvidence(t *testing.T) {
 	for _, tc := range []struct {

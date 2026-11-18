@@ -326,6 +326,7 @@ func SetApiRouter(router *gin.Engine) {
 			conversationSessionRoute.GET("/sessions/:id", controller.GetConversationSessionDetail)
 			conversationSessionRoute.GET("/unassigned", controller.GetUnassignedQA)
 			conversationSessionRoute.POST("/search", controller.SearchQA)
+			conversationSessionRoute.POST("/evidence", controller.GetQAEvidence)
 		}
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)

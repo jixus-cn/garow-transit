@@ -16,49 +16,49 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import type { ColumnDef, PaginationState } from '@tanstack/react-table'
-import { useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import type { ColumnDef, PaginationState } from "@tanstack/react-table";
+import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   DataTablePage,
   useDataTable,
   TruncatedCell,
-} from '@/components/data-table'
-import { ErrorState } from '@/components/error-state'
-import { Button } from '@/components/ui/button'
-import dayjs from '@/lib/dayjs'
-import { useAuthStore } from '@/stores/auth-store'
+} from "@/components/data-table";
+import { ErrorState } from "@/components/error-state";
+import { Button } from "@/components/ui/button";
+import dayjs from "@/lib/dayjs";
+import { useAuthStore } from "@/stores/auth-store";
 
-import { qaChats, type QAChat, type QAFilter } from '../qa-api'
+import { qaChats, type QAChat, type QAFilter } from "../qa-api";
 
-const empty: QAChat[] = []
+const empty: QAChat[] = [];
 export function QAChats(props: { filter: QAFilter; onUnassigned: () => void }) {
-  const { t } = useTranslation()
-  const user = useAuthStore((s) => s.auth.user?.id)
+  const { t } = useTranslation();
+  const user = useAuthStore((s) => s.auth.user?.id);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 20,
-  })
+  });
   const q = useQuery({
-    queryKey: ['qa-chats', user, pagination, props.filter],
+    queryKey: ["qa-chats", user, pagination, props.filter],
     queryFn: () =>
       qaChats(pagination.pageIndex + 1, pagination.pageSize, props.filter),
     retry: false,
     gcTime: 0,
-  })
+  });
   const columns = useMemo<ColumnDef<QAChat>[]>(
     () => [
       {
-        accessorKey: 'preview',
-        header: t('Topic preview'),
+        accessorKey: "preview",
+        header: t("Topic preview"),
         cell: ({ row }) => (
           <TruncatedCell>
             <Link
-              className='text-primary underline'
-              to='/conversation-sessions/$sessionId'
+              className="text-primary underline"
+              to="/conversation-sessions/$sessionId"
               params={{ sessionId: row.original.chat_key }}
             >
               {row.original.preview}
@@ -67,20 +67,20 @@ export function QAChats(props: { filter: QAFilter; onUnassigned: () => void }) {
         ),
       },
       {
-        accessorKey: 'username',
-        header: t('User'),
+        accessorKey: "username",
+        header: t("User"),
         cell: ({ row }) => row.original.username || `#${row.original.user_id}`,
       },
-      { accessorKey: 'turn_count', header: t('Exchanges') },
+      { accessorKey: "turn_count", header: t("Input records") },
       {
-        accessorKey: 'updated_at',
-        header: t('Updated'),
+        accessorKey: "updated_at",
+        header: t("Updated"),
         cell: ({ row }) =>
-          dayjs.unix(row.original.updated_at).format('YYYY-MM-DD HH:mm'),
+          dayjs.unix(row.original.updated_at).format("YYYY-MM-DD HH:mm"),
       },
     ],
-    [t]
-  )
+    [t],
+  );
   const { table } = useDataTable({
     columns,
     data: q.data?.items ?? empty,
@@ -91,14 +91,14 @@ export function QAChats(props: { filter: QAFilter; onUnassigned: () => void }) {
     manualPagination: true,
     enableRowSelection: false,
     enableSorting: false,
-  })
+  });
   if (q.isError) {
     return (
       <ErrorState
-        title={t('Failed to load conversations')}
+        title={t("Failed to load conversations")}
         onRetry={() => void q.refetch()}
       />
-    )
+    );
   }
   return (
     <DataTablePage
@@ -106,17 +106,17 @@ export function QAChats(props: { filter: QAFilter; onUnassigned: () => void }) {
       columns={columns}
       isLoading={q.isPending}
       isFetching={q.isFetching}
-      emptyTitle={t('No verified chats')}
+      emptyTitle={t("No verified chats")}
       emptyDescription={t(
-        'Prompts without a verified chat are listed separately.'
+        "Prompts without a verified chat are listed separately.",
       )}
       emptyAction={
-        <Button variant='outline' onClick={props.onUnassigned}>
-          {t('Unassigned exchanges')}
+        <Button variant="outline" onClick={props.onUnassigned}>
+          {t("Unassigned exchanges")}
         </Button>
       }
       paginationInFooter
-      className='h-auto min-h-0 flex-1'
+      className="h-auto min-h-0 flex-1"
     />
-  )
+  );
 }

@@ -16,70 +16,109 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { t } from 'i18next'
+import { t } from "i18next";
 
-import type { ApiResponse } from '@/features/profile/types'
-import { api } from '@/lib/api'
-import { createServerError } from '@/lib/server-error-message'
+import type { ApiResponse } from "@/features/profile/types";
+import { api } from "@/lib/api";
+import { createServerError } from "@/lib/server-error-message";
 
 export interface QATurn {
-  id: number
-  user_id: number
-  created_at: number
-  chat_key: string
-  prompt: string
-  final: string
+  id: number;
+  user_id: number;
+  created_at: number;
+  chat_key: string;
+  prompt: string;
+  final: string;
 }
 export interface QAChat {
-  chat_key: string
-  username: string
-  user_id: number
-  updated_at: number
-  preview: string
-  turn_count: number
+  chat_key: string;
+  username: string;
+  user_id: number;
+  updated_at: number;
+  preview: string;
+  turn_count: number;
 }
 export interface QAFilter {
-  user_id?: number
-  start_timestamp?: number
-  end_timestamp?: number
+  user_id?: number;
+  start_timestamp?: number;
+  end_timestamp?: number;
 }
 interface QAPage<T> {
-  items: T[]
-  total: number
-  page: number
-  page_size: number
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 function read<T>(body: ApiResponse<T>): T {
   if (!body.success || !body.data) {
-    throw createServerError(body, t('Failed to load conversation'))
+    throw createServerError(body, t("Failed to load conversation"));
   }
-  return body.data
+  return body.data;
 }
 export async function qaChats(page: number, size: number, filter: QAFilter) {
   const r = await api.get<ApiResponse<QAPage<QAChat>>>(
-    '/api/conversations/sessions',
-    { params: { p: page, page_size: size, ...filter } }
-  )
-  return read(r.data)
+    "/api/conversations/sessions",
+    { params: { p: page, page_size: size, ...filter } },
+  );
+  return read(r.data);
 }
 export async function qaTurns(
   chat: string,
   query: string,
   p: number,
-  filter: QAFilter
+  filter: QAFilter,
 ) {
-  const params = { p, page_size: 20, ...filter }
+  const params = { p, page_size: 20, ...filter };
   if (query) {
     const r = await api.post<ApiResponse<QAPage<QATurn>>>(
-      '/api/conversations/search',
+      "/api/conversations/search",
       { q: query },
-      { params }
-    )
-    return read(r.data)
+      { params },
+    );
+    return read(r.data);
   }
   const path = chat
     ? `/api/conversations/sessions/${encodeURIComponent(chat)}`
-    : '/api/conversations/unassigned'
-  const r = await api.get<ApiResponse<QAPage<QATurn>>>(path, { params })
-  return read(r.data)
+    : "/api/conversations/unassigned";
+  const r = await api.get<ApiResponse<QAPage<QATurn>>>(path, { params });
+  return read(r.data);
+}
+
+export interface QAObservation {
+  id: number;
+  outcome_id?: number;
+  request_id: string;
+  user_id: number;
+  created_at: number;
+  finished_at?: number;
+  turn_id?: number;
+  chat_key: string;
+  chat_basis: string;
+  basis: string;
+  protocol?: string;
+  prompt: string;
+  final: string;
+  input_state: string;
+  outcome: string;
+  http_status?: number;
+  part_layout?: string;
+}
+export interface QAEvidencePage {
+  items: QAObservation[];
+  total: number;
+  snapshot: number;
+  next_cursor?: string;
+  retention_changed: boolean;
+}
+export async function qaEvidence(
+  chat: string,
+  query: string,
+  cursor: string,
+  filter: QAFilter,
+) {
+  const r = await api.post<ApiResponse<QAEvidencePage>>(
+    "/api/conversations/evidence",
+    { ...filter, chat_key: chat, q: query, cursor, page_size: 64 },
+  );
+  return read(r.data);
 }
