@@ -320,14 +320,10 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		handlePermissionRoute(apiRouter.Group("", middleware.DisableCache(), middleware.AdminAuth()), http.MethodGet, "/audit", authz.AuditRead, controller.GetAuditLogs)
 		apiRouter.GET("/audit/self", middleware.DisableCache(), middleware.UserAuth(), controller.GetAuditLogs)
-		apiRouter.GET("/conversation/:request_id", middleware.DisableCache(), middleware.RootAuth(), controller.GetConversation)
-		apiRouter.GET("/conversation/:request_id/thread", middleware.DisableCache(), middleware.RootAuth(), controller.GetConversationThread)
 		conversationSessionRoute := apiRouter.Group("/conversations", middleware.DisableCache(), middleware.RootAuth())
 		{
 			conversationSessionRoute.GET("/sessions", controller.GetConversationSessions)
 			conversationSessionRoute.GET("/sessions/:id", controller.GetConversationSessionDetail)
-			conversationSessionRoute.GET("/messages/search", controller.SearchConversationMessages)
-			conversationSessionRoute.GET("/requests/:request_id", controller.GetConversationRequest)
 			conversationSessionRoute.GET("/unassigned", controller.GetUnassignedQA)
 			conversationSessionRoute.POST("/search", controller.SearchQA)
 		}

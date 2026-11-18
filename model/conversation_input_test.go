@@ -24,9 +24,9 @@ func TestConversationInputAttribution(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var qs, ks []string
-			for _, p := range ConversationInputParts(tc.input) {
+			for _, p := range ConversationQAParts(tc.input) {
 				ks = append(ks, p.Kind)
-				if p.IsQuestion() {
+				if p.Kind == "text" {
 					qs = append(qs, strings.TrimSpace(p.Text))
 				}
 			}

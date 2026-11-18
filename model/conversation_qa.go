@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/QuantumNous/new-api/common"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -74,22 +76,13 @@ var qaWriter sync.Mutex // Garow has one production writer; SQL uniqueness also 
 
 // StoreQA atomically projects one observed request. Edges carry only scoped digests;
 // they may attach a reply to an earlier turn but cannot invent a user submission.
-func StoreQA(entry *ConversationLog, f QAFacts, historical bool, audit AuditLog, cutoff int64) error {
+func StoreQA(entry QARequestMeta, f QAFacts, cutoff int64) error {
 	qaWriter.Lock()
 	defer qaWriter.Unlock()
-	fresh := false
-	err := DB.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Transaction(func(tx *gorm.DB) error {
+	return DB.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Transaction(func(tx *gorm.DB) error {
 		var done int64
 		if err := tx.Model(&QAReceipt{}).Where("request_id = ?", entry.RequestId).Count(&done).Error; err != nil || done != 0 {
 			return err
-		}
-		fresh = true
-		if !historical {
-			entry.Payload = nil
-			entry.SessionState = "qa"
-			if err := tx.Create(entry).Error; err != nil {
-				return err
-			}
 		}
 		scope := qaDigest(fmt.Sprint(entry.UserId), fmt.Sprint(entry.TokenId), f.Client)
 		chat := ""
@@ -262,10 +255,6 @@ func StoreQA(entry *ConversationLog, f QAFacts, historical bool, audit AuditLog,
 		}
 		return tx.Create(&r).Error
 	})
-	if err == nil && !historical && fresh {
-		RecordAuditLog(nil, audit)
-	}
-	return err
 }
 
 func assignQAChat(tx *gorm.DB, t QATurn, key, basis string) error {
@@ -379,4 +368,53 @@ func QAByRequest(id string, cutoff int64) (*QATurn, error) {
 		return nil, nil
 	}
 	return &t, err
+}
+
+func ConversationUsernames(ids []int) map[int]string {
+	result := make(map[int]string)
+	if len(ids) == 0 {
+		return result
+	}
+	var users []User
+	if err := DB.Select("id", "username").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return result
+	}
+	for _, user := range users {
+		result[user.Id] = user.Username
+	}
+	return result
+}
+
+func ConversationCutoff() int64 {
+	days := common.GetEnvOrDefault("CONVERSATION_RETENTION_DAYS", 0)
+	if days == 0 {
+		days = common.GetEnvOrDefault("CONVERSATION_LOG_RETENTION_DAYS", 30)
+	}
+	days = min(max(days, 1), 90)
+	return time.Now().Add(-time.Duration(days) * 24 * time.Hour).Unix()
+}
+
+type QARequestMeta struct {
+	RequestId       string
+	UserId, TokenId int
+	CreatedAt       int64
+}
+
+// Expire references to an old turn even when the continuation itself is newer.
+func CleanupConversations(cutoff int64) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		expired := tx.Model(&QATurn{}).Select("id").Where("created_at < ?", cutoff)
+		if err := tx.Model(&QAReceipt{}).Where("turn_id IN (?)", expired).Updates(map[string]any{"turn_id": 0, "state": "expired"}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("turn_id IN (?)", expired).Delete(&QAEdge{}).Error; err != nil {
+			return err
+		}
+		for _, table := range []any{&QAEdge{}, &QAReceipt{}, &QATurn{}} {
+			if err := tx.Where("created_at < ?", cutoff).Delete(table).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

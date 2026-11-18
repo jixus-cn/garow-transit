@@ -1,6 +1,10 @@
 package model
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
 var clientContextTags = []string{"environment_context", "environment_details", "user_instructions", "system-reminder", "permissions instructions", "turn_aborted", "context", "ide_opened_file", "ide_selection", "ide_context", "instructions", "skill", "subagent_notification", "app-context", "user_info", "open_and_recently_viewed_files", "additional_data"}
 
@@ -14,28 +18,15 @@ func requestHeading(line string) bool {
 
 // Split only structural wrappers at the start of a content part; prose and
 // quotations (including fenced examples) are never searched for bare tokens.
-func ConversationInputParts(raw string) []ConversationUserItem {
-	return conversationInputParts(raw, false)
-}
-
-// ConversationQAParts retains whitespace inside a verified user boundary.
-func ConversationQAParts(raw string) []ConversationUserItem { return conversationInputParts(raw, true) }
-func conversationInputParts(raw string, exact bool) []ConversationUserItem {
-	userSegment := strings.TrimSpace
-	if exact {
-		userSegment = func(s string) string { return s }
-	}
+func ConversationQAParts(raw string) []ConversationUserItem {
 	var parts []ConversationUserItem
 	add := func(kind, text string) {
 		if strings.TrimSpace(text) != "" {
-			parts = append(parts, ConversationUserItem{Role: "user", Kind: kind, Context: kind == "context", Text: text, Hash: ConversationHash(text)})
+			parts = append(parts, ConversationUserItem{Kind: kind, Text: text})
 		}
 	}
 	for rest := raw; strings.TrimSpace(rest) != ""; {
-		trimmed := strings.TrimSpace(rest)
-		if exact {
-			trimmed = strings.TrimLeft(rest, " \r\n\t")
-		}
+		trimmed := strings.TrimLeft(rest, " \r\n\t")
 		first, _, _ := strings.Cut(trimmed, "\n")
 		lower := strings.ToLower(strings.TrimSpace(first))
 		if strings.HasPrefix(lower, "# agents.md instructions for ") {
@@ -86,7 +77,7 @@ func conversationInputParts(raw string, exact bool) []ConversationUserItem {
 					}
 				} else if fence == "" && requestHeading(clean) {
 					add("context", trimmed[:offset+len(line)])
-					add("text", userSegment(trimmed[offset+len(line):]))
+					add("text", trimmed[offset+len(line):])
 					found = true
 					break
 				}
@@ -101,7 +92,7 @@ func conversationInputParts(raw string, exact bool) []ConversationUserItem {
 			_, after, ok := strings.Cut(trimmed, "\n")
 			if ok {
 				add("context", first)
-				add("text", userSegment(after))
+				add("text", after)
 				break
 			}
 		}
@@ -119,3 +110,10 @@ func conversationInputParts(raw string, exact bool) []ConversationUserItem {
 	}
 	return parts
 }
+
+func ConversationHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:16])
+}
+
+type ConversationUserItem struct{ Kind, Text string }

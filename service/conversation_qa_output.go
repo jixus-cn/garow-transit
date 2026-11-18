@@ -15,7 +15,6 @@ import (
 type qaCapture struct {
 	facts                                                              model.QAFacts
 	limit, seen                                                        int
-	sparse                                                             bool
 	ws, framed, overflow, invalid, failed, terminal, hasTool, chatStop bool
 	buf                                                                []byte
 	responseID, final                                                  string
@@ -281,7 +280,6 @@ func (q *qaCapture) event(e map[string]any) {
 	if !has {
 		return
 	}
-	q.sparse = len(out) == 0
 	final, _ := qaTerminalMessage(out)
 	if q.terminal && q.final != final {
 		q.invalid = true
@@ -305,4 +303,11 @@ func (q *qaCapture) result(f *model.QAFacts, allowed bool) {
 	if len(s) <= 1<<20 && strings.TrimSpace(s) != "" {
 		f.Final = s
 	}
+}
+
+func eventInt(v any, otherwise int) int {
+	if n, ok := v.(float64); ok {
+		return int(n)
+	}
+	return otherwise
 }

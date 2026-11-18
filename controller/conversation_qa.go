@@ -2,7 +2,6 @@ package controller
 
 import (
 	"encoding/hex"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 func qaList(c *gin.Context, kind string) {
@@ -70,27 +68,12 @@ func qaList(c *gin.Context, kind string) {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
-		if err == nil {
-			model.RecordAuditLog(c, model.AuditLog{UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"), Category: model.AuditCategoryConversation, Action: "conversation.session_view", Content: "Conversation", Success: true})
-		}
 	}
 	if err != nil {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 	common.ApiSuccess(c, gin.H{"items": rows, "total": total, "page": p.Page, "page_size": p.PageSize})
-}
-func qaRequestView(c *gin.Context) {
-	turn, err := model.QAByRequest(c.Param("request_id"), model.ConversationCutoff())
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		c.AbortWithStatus(http.StatusInternalServerError)
-		return
-	}
-	common.ApiSuccess(c, gin.H{"turn": turn})
 }
 func GetUnassignedQA(c *gin.Context) {
 	if conversationRootSession(c) {

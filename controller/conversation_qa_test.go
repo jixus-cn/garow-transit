@@ -1,8 +1,6 @@
 package controller
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -60,46 +58,38 @@ func TestConversationQAStorageMatrix(t *testing.T) {
 			week := int64(7 * 24 * 3600)
 			for _, upgrade := range []bool{false, true} {
 				t.Run(fmt.Sprintf("upgrade=%v", upgrade), func(t *testing.T) {
-					old := []any{&model.ConversationLog{}, &model.ConversationSession{}, &model.ConversationMessage{}, &model.AuditLog{}}
-					tables := append(old, &model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{})
+					tables := []any{&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}}
 					for _, tab := range tables {
-						require.False(t, db.Migrator().HasTable(tab), "requires dedicated empty database")
+						require.False(t, db.Migrator().HasTable(tab), "requires a dedicated empty database")
 					}
 					t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(tables...)) })
-					var original []byte
 					if upgrade {
-						require.NoError(t, db.AutoMigrate(old...))
-						row := model.ConversationLog{RequestId: "legacy", CreatedAt: now - week, UserId: 1, TokenId: 1, Kind: "responses", Outcome: "completed"}
-						require.NoError(t, model.StoreConversation(&row, model.ConversationContent{Request: `{"input":"old question"}`, Response: `{"status":"completed","output":[{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"old answer"}]}]}`}, model.AuditLog{Username: "fixture", ActorRole: 1}))
-						original = bytes.Clone(row.Payload)
+						// .11 uses exactly these QA schemas. Preserve a verified chat and an unassigned turn.
+						require.NoError(t, db.AutoMigrate(tables...))
+						for _, tc := range []struct{ id, chat string }{{"known", "stable"}, {"old", ""}} {
+							require.NoError(t, model.StoreQA(model.QARequestMeta{RequestId: tc.id, UserId: 1, CreatedAt: now}, model.QAFacts{Chat: tc.chat, Prompt: "historical", Final: "retained"}, 0))
+						}
 					}
 					for range 2 {
 						require.NoError(t, db.AutoMigrate(tables...))
 					}
-					for i := range 2 {
-						n, err := service.BackfillQA()
-						require.NoError(t, err)
-						if upgrade && i == 0 {
-							require.Equal(t, 1, n)
-						} else {
-							require.Zero(t, n)
-						}
-					}
 					if upgrade {
-						var row model.ConversationLog
-						require.NoError(t, db.Where("request_id = ?", "legacy").Take(&row).Error)
-						require.Equal(t, original, row.Payload)
-						x, e := model.QAByRequest("legacy", 0)
-						require.NoError(t, e)
-						require.Equal(t, "old answer", x.Final)
+						x, err := model.QAByRequest("old", 0)
+						require.NoError(t, err)
+						require.Empty(t, x.ChatKey)
+						require.Equal(t, "retained", x.Final)
+						x, err = model.QAByRequest("known", 0)
+						require.NoError(t, err)
+						require.NotEmpty(t, x.ChatKey)
+						require.Equal(t, "retained", x.Final)
 					}
 					write := func(id string, at int64, key int, f model.QAFacts) {
 						t.Helper()
 						if f.Client == "" {
 							f.Client = "fixture"
 						}
-						r := model.ConversationLog{RequestId: id, CreatedAt: at, UserId: 2, TokenId: key}
-						require.NoError(t, model.StoreQA(&r, f, false, model.AuditLog{EventId: id, RequestId: id, Username: "fixture", ActorRole: 1}, 0))
+						r := model.QARequestMeta{RequestId: id, CreatedAt: at, UserId: 2, TokenId: key}
+						require.NoError(t, model.StoreQA(r, f, 0))
 					}
 					read := func(id string) *model.QATurn {
 						t.Helper()
@@ -154,10 +144,9 @@ func TestConversationQAStorageMatrix(t *testing.T) {
 					require.Equal(t, oldChat, read("after-expiry").ChatKey)
 					_, e = model.QAByRequest("q1", now-week+1)
 					require.ErrorIs(t, e, gorm.ErrRecordNotFound)
-					var live model.ConversationLog
-					require.NoError(t, db.Where("request_id = ?", "after-expiry").Take(&live).Error)
-					require.Empty(t, live.Payload)
-					require.Equal(t, "qa", live.SessionState)
+					for _, obsolete := range []string{"conversation_logs", "conversation_sessions_v2", "conversation_messages_v2"} {
+						require.False(t, db.Migrator().HasTable(obsolete))
+					}
 				})
 			}
 		})
@@ -165,7 +154,7 @@ func TestConversationQAStorageMatrix(t *testing.T) {
 }
 func TestConversationQACaptureWriter(t *testing.T) {
 	t.Setenv("CONVERSATION_LOG_ENABLED", "true")
-	t.Setenv("CONVERSATION_LOG_MODE", "qa")
+	t.Setenv("CONVERSATION_LOG_MODE", "full") // Retired settings must not enable legacy capture.
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sql, err := db.DB()
@@ -174,7 +163,7 @@ func TestConversationQACaptureWriter(t *testing.T) {
 	before, logs := model.DB, model.LOG_DB
 	model.DB, model.LOG_DB = db, db
 	t.Cleanup(func() { model.DB, model.LOG_DB = before, logs; _ = sql.Close() })
-	require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}, &model.ConversationLog{}, &model.ConversationSession{}, &model.ConversationMessage{}, &model.AuditLog{}, &model.User{}))
+	require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}, &model.AuditLog{}, &model.User{}))
 	service.StartConversationRecorder()
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"system","content":"excluded"},{"role":"user","content":"captured"}]}`))
@@ -185,71 +174,68 @@ func TestConversationQACaptureWriter(t *testing.T) {
 	require.NotNil(t, cap)
 	cap.Observe([]byte(`{"choices":[{"message":{"content":"delivered"},"finish_reason":"stop"}]}`))
 	cap.Finish(200, false)
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	for {
-		var n int64
-		require.NoError(t, db.Model(&model.AuditLog{}).Where("request_id = ?", "qa-e2e").Count(&n).Error)
-		if n == 1 {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("missing QA audit")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+	service.FlushConversations(4 * time.Second)
 	turn, err := model.QAByRequest("qa-e2e", 0)
 	require.NoError(t, err)
 	require.NotNil(t, turn)
 	require.Equal(t, "captured", turn.Prompt)
 	require.Equal(t, "delivered", turn.Final)
 	var n int64
-	require.NoError(t, db.Model(&model.ConversationMessage{}).Count(&n).Error)
+	require.NoError(t, db.Model(&model.AuditLog{}).Count(&n).Error)
 	require.Zero(t, n)
-	var row model.ConversationLog
-	require.NoError(t, db.Take(&row).Error)
-	require.Empty(t, row.Payload)
+	require.False(t, db.Migrator().HasTable("conversation_logs"))
 }
 
-func TestConversationQARequestAliases(t *testing.T) {
-	t.Setenv("CONVERSATION_LOG_MODE", "qa")
+func TestConversationQARootSessionRequired(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	sql, err := db.DB()
-	require.NoError(t, err)
-	sql.SetMaxOpenConns(1)
 	prev := model.DB
 	model.DB = db
-	t.Cleanup(func() { model.DB = prev; _ = sql.Close() })
+	t.Cleanup(func() { model.DB = prev; sql, _ := db.DB(); _ = sql.Close() })
 	require.NoError(t, db.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}))
-	require.NoError(t, model.StoreQA(&model.ConversationLog{RequestId: "request", CreatedAt: time.Now().Unix(), UserId: 1}, model.QAFacts{Prompt: "question", Final: "answer"}, true, model.AuditLog{}, 0))
-	for _, handler := range []gin.HandlerFunc{GetConversation, GetConversationThread, GetConversationRequest} {
-		for _, session := range []bool{false, true} {
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-			c.Request = httptest.NewRequest("GET", "/api/conversation/request", nil)
-			c.Params = gin.Params{{Key: "request_id", Value: "request"}}
-			c.Set("id", 1)
-			c.Set("role", 100)
-			if session {
-				c.Set("session_id", "synthetic")
-				c.Set("auth_version", int64(1))
-				c.Set("session_version", int64(1))
-			}
-			handler(c)
-			if !session {
-				require.Equal(t, 403, w.Code)
-				require.NotContains(t, w.Body.String(), "question")
-				continue
-			}
-			require.Equal(t, 200, w.Code)
-			require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
-			var resp struct{ Data struct{ Turn map[string]any } }
-			require.NoError(t, common.Unmarshal(w.Body.Bytes(), &resp))
-			require.Equal(t, "question", resp.Data.Turn["prompt"])
-			require.Equal(t, "answer", resp.Data.Turn["final"])
-			require.Len(t, resp.Data.Turn, 6)
+	require.NoError(t, model.StoreQA(model.QARequestMeta{RequestId: "request", CreatedAt: time.Now().Unix(), UserId: 1}, model.QAFacts{Prompt: "question", Final: "answer"}, 0))
+	for _, session := range []bool{false, true} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/api/conversations/unassigned", nil)
+		c.Set("id", 1)
+		c.Set("role", 100)
+		if session {
+			c.Set("session_id", "synthetic")
+			c.Set("auth_version", int64(1))
+			c.Set("session_version", int64(1))
 		}
+		GetUnassignedQA(c)
+		if !session {
+			require.Equal(t, 403, w.Code)
+			require.NotContains(t, w.Body.String(), "question")
+			continue
+		}
+		require.Equal(t, 200, w.Code)
+		require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		var resp struct {
+			Data struct{ Items []map[string]any }
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &resp))
+		require.Len(t, resp.Data.Items, 1)
+		require.Len(t, resp.Data.Items[0], 6)
+		require.Equal(t, "answer", resp.Data.Items[0]["final"])
 	}
+}
+
+func TestConversationEventsRetiredFromGeneralAudit(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	previous := model.LOG_DB
+	model.LOG_DB = db
+	t.Cleanup(func() { model.LOG_DB = previous; conn, _ := db.DB(); _ = conn.Close() })
+	require.NoError(t, db.AutoMigrate(&model.AuditLog{}))
+	for _, category := range []string{"conversation", "login", "operation"} {
+		require.NoError(t, db.Create(&model.AuditLog{EventId: category, Category: category, ActorRole: common.RoleRootUser}).Error)
+	}
+	rows, total, err := model.GetAuditLogs(model.AuditLogFilter{}, 0, 10, common.RoleRootUser)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
+	require.ElementsMatch(t, []string{"login", "operation"}, []string{rows[0].Category, rows[1].Category})
+	require.False(t, model.ValidAuditCategory("conversation"))
 }

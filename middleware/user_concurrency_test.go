@@ -28,7 +28,6 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestUserConcurrencySharesAPIKeysAndReleasesAfterStreaming(t *testing.T) {
@@ -105,31 +104,24 @@ func TestConversationRecordingDistinguishesConcurrencyCleanupFromClientCancellat
 	setupDashboardAuthMiddlewareTest(t)
 	useRateLimitMiniRedis(t)
 	t.Setenv("CONVERSATION_LOG_ENABLED", "true")
-	require.NoError(t, model.DB.AutoMigrate(&model.ConversationLog{}, &model.ConversationSession{}, &model.ConversationMessage{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.QATurn{}, &model.QAReceipt{}, &model.QAEdge{}))
 	sqlDB, err := model.DB.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	user := model.User{Username: "conversation-limited", Password: "unused", Group: "default", AffCode: "conversation-limited", Role: common.RoleCommonUser}
 	require.NoError(t, model.DB.Create(&user).Error)
-	persisted := make(chan model.AuditLog, 1)
-	require.NoError(t, model.DB.Callback().Create().After("gorm:create").Register("test:conversation_persisted", func(db *gorm.DB) {
-		if audit, ok := db.Statement.Dest.(*model.AuditLog); ok && db.Error == nil {
-			persisted <- *audit
-		}
-	}))
 	service.StartConversationRecorder()
 	for _, tc := range []struct {
 		name    string
 		body    string
 		status  int
 		cancel  bool
-		outcome string
 		success bool
 	}{
-		{name: "completed-sse", body: "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"completed\",\"output\":[]}}\n\n", status: http.StatusOK, outcome: "completed", success: true},
-		{name: "completed-json", body: `{"id":"resp_fixture","status":"completed","output":[]}`, status: http.StatusOK, outcome: "completed", success: true},
-		{name: "client-canceled", body: `{"id":"resp_fixture","status":"completed","output":[]}`, status: http.StatusOK, cancel: true, outcome: "interrupted"},
-		{name: "failed", body: `{"error":{"message":"fixture failure"}}`, status: http.StatusServiceUnavailable, outcome: "failed"},
+		{name: "completed-sse", body: "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"final\"}]}]}}\n\n", status: http.StatusOK, success: true},
+		{name: "completed-json", body: `{"id":"resp_fixture","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final"}]}]}`, status: http.StatusOK, success: true},
+		{name: "client-canceled", body: `{"id":"resp_fixture","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"final"}]}]}`, status: http.StatusOK, cancel: true},
+		{name: "failed", body: `{"error":{"message":"fixture failure"}}`, status: http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -151,18 +143,16 @@ func TestConversationRecordingDistinguishesConcurrencyCleanupFromClientCancellat
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"fixture","input":"synthetic"}`)).WithContext(ctx)
 			router.ServeHTTP(response, request)
 			require.Equal(t, tc.status, response.Code)
-			select {
-			case audit := <-persisted:
-				assert.Equal(t, requestID, audit.RequestId)
-				assert.Equal(t, tc.success, audit.Success)
-			case <-time.After(5 * time.Second):
-				t.Fatal("conversation audit was not persisted")
+			service.FlushConversations(5 * time.Second)
+			turn, err := model.QAByRequest(requestID, 0)
+			require.NoError(t, err)
+			require.NotNil(t, turn)
+			assert.Equal(t, "synthetic", turn.Prompt)
+			if tc.success {
+				assert.Equal(t, "final", turn.Final)
+			} else {
+				assert.Empty(t, turn.Final)
 			}
-			var entry model.ConversationLog
-			require.NoError(t, model.DB.Where("request_id = ?", requestID).First(&entry).Error)
-			assert.Equal(t, tc.outcome, entry.Outcome)
-			assert.Equal(t, "responses", entry.Kind)
-			assert.Equal(t, "http", entry.Protocol)
 		})
 	}
 }

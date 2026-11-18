@@ -83,9 +83,3 @@ export async function qaTurns(
   const r = await api.get<ApiResponse<QAPage<QATurn>>>(path, { params })
   return read(r.data)
 }
-export async function qaByRequest(id: string) {
-  const r = await api.get<ApiResponse<{ turn: QATurn | null }>>(
-    `/api/conversations/requests/${encodeURIComponent(id)}`
-  )
-  return read(r.data).turn
-}

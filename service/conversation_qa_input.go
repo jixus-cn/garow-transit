@@ -2,14 +2,11 @@ package service
 
 import (
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 )
-
-func ConversationQAMode() bool { return os.Getenv("CONVERSATION_LOG_MODE") == "qa" }
 
 func qaString(v any) string { s, _ := v.(string); return s }
 func qaID(v any) string {

@@ -20,8 +20,6 @@ import type { Table } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 
 import { Combobox } from '@/components/ui/combobox'
-import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
 
 import { CompactDateTimeRangePicker } from '../../components/compact-date-time-range-picker'
 import {
@@ -67,9 +65,6 @@ export function AuditLogFilterBar(props: {
   onReset: () => void
 }) {
   const { t } = useTranslation()
-  const canReadConversations =
-    useAuthStore((state) => state.auth.user?.role === ROLE.SUPER_ADMIN) &&
-    props.scope === 'all'
   const dateFilter = (
     <LogsFilterField wide>
       <CompactDateTimeRangePicker
@@ -137,9 +132,6 @@ export function AuditLogFilterBar(props: {
             { value: 'security', label: t('Account security') },
             { value: 'operation', label: t('Operation audit') },
             { value: 'access_token', label: t('Access Token') },
-            ...(canReadConversations
-              ? [{ value: 'conversation', label: t('Conversations') }]
-              : []),
           ]}
           onChange={(value) =>
             props.onChange({ category: value === 'all' ? undefined : value })

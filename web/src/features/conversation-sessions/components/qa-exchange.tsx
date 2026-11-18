@@ -18,9 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
-import { ConversationContent } from '@/features/usage-logs/audit/components/conversation-content'
-
 import type { QATurn } from '../qa-api'
+import { ConversationContent } from './conversation-content'
 
 export function QAExchange(props: { turn: QATurn }) {
   const { t } = useTranslation()

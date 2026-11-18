@@ -16,36 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { DetailSection } from '@/features/usage-logs/components/dialogs/log-detail-layout'
 
-import { DetailSection } from '../../components/dialogs/log-detail-layout'
-
-export function ConversationText(props: {
-  value: string
-  label: string
-  json?: boolean
-}) {
+export function ConversationText(props: { value: string; label: string }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
-  const text = useMemo(() => {
-    if (props.json && props.value) {
-      try {
-        return JSON.stringify(JSON.parse(props.value), null, 2)
-      } catch {
-        // Preserve partial captures.
-      }
-    }
-    return props.value
-  }, [props.value, props.json])
+  const text = props.value
   if (!text) {
     return (
       <p className='text-muted-foreground text-sm'>{t('No recorded text')}</p>
@@ -76,52 +57,10 @@ export function ConversationText(props: {
   )
 }
 
-export function ConversationContent(props: {
-  label: string
-  value: string
-  json?: boolean
-  collapsed?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  if (!props.collapsed) {
-    return (
-      <DetailSection label={props.label}>
-        <ConversationText
-          value={props.value}
-          label={props.label}
-          json={props.json}
-        />
-      </DetailSection>
-    )
-  }
+export function ConversationContent(props: { label: string; value: string }) {
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className='min-w-0 rounded-md border p-2.5'
-    >
-      <CollapsibleTrigger
-        render={
-          <Button
-            variant='ghost'
-            size='sm'
-            className='h-auto max-w-full justify-start text-left whitespace-normal'
-          />
-        }
-      >
-        {props.label}
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        {open && (
-          <div className='pt-2'>
-            <ConversationText
-              value={props.value}
-              label={props.label}
-              json={props.json}
-            />
-          </div>
-        )}
-      </CollapsibleContent>
-    </Collapsible>
+    <DetailSection label={props.label}>
+      <ConversationText value={props.value} label={props.label} />
+    </DetailSection>
   )
 }

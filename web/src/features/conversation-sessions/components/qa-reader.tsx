@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
@@ -26,33 +26,8 @@ import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { qaByRequest, qaTurns, type QAFilter } from '../qa-api'
+import { qaTurns, type QAFilter } from '../qa-api'
 import { QAExchange } from './qa-exchange'
-
-export function QARequest(props: { requestId: string }) {
-  const { t } = useTranslation()
-  const user = useAuthStore((s) => s.auth.user?.id)
-  const q = useQuery({
-    queryKey: ['qa-request', user, props.requestId],
-    queryFn: () => qaByRequest(props.requestId),
-    retry: false,
-    gcTime: 0,
-  })
-  if (q.isPending) return <LoadingState />
-  if (q.isError) {
-    return (
-      <ErrorState
-        title={t('Conversation unavailable, expired, or access denied.')}
-        onRetry={() => void q.refetch()}
-      />
-    )
-  }
-  return q.data ? (
-    <QAExchange turn={q.data} />
-  ) : (
-    <EmptyState title={t('No verified user prompt')} />
-  )
-}
 
 export function QAReader(props: {
   chat?: string

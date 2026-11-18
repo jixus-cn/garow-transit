@@ -138,12 +138,7 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 }
 
 func GetAuditLogs(filter AuditLogFilter, start, limit, viewerRole int) ([]*AuditLog, int64, error) {
-	query := LOG_DB.Model(&AuditLog{})
-	if filter.SelfView || viewerRole < common.RoleRootUser {
-		query = query.Where("category <> ?", AuditCategoryConversation)
-	} else {
-		query = query.Where("(category <> ? OR created_at >= ?)", AuditCategoryConversation, ConversationCutoff())
-	}
+	query := LOG_DB.Model(&AuditLog{}).Where("category <> ?", AuditCategoryConversation)
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		// Decode native JSON through database/sql as text for AuditOther.Scan.
 		// Preserve numeric metadata instead of returning quoted Int64 values.
@@ -269,7 +264,7 @@ func MigrateAuditLogs() error {
 }
 
 func ValidAuditCategory(category string) bool {
-	return category == "" || category == AuditCategoryLogin || category == AuditCategorySecurity || category == AuditCategoryOperation || category == AuditCategoryAccessToken || category == AuditCategoryConversation
+	return category == "" || category == AuditCategoryLogin || category == AuditCategorySecurity || category == AuditCategoryOperation || category == AuditCategoryAccessToken
 }
 
 func ValidTokenFingerprint(value string) bool {
