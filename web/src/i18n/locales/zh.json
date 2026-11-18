@@ -7516,6 +7516,15 @@
     "Keyword": "关键词",
     "Context Limit": "上下文限制",
     "Max Context Tokens": "最大上下文 Token",
-    "Maximum input context in tokens. Requests exceeding this limit are rejected before reaching upstream. 0 means unlimited.": "最大输入上下文（token）。超过此限制的请求会在到达上游前被拒绝。0 表示不限制。"
+    "Maximum input context in tokens. Requests exceeding this limit are rejected before reaching upstream. 0 means unlimited.": "最大输入上下文（token）。超过此限制的请求会在到达上游前被拒绝。0 表示不限制。",
+    "File references & context ({{chars}} characters)": "文件引用与上下文（{{chars}} 字符）",
+    "Session opening history ({{count}} messages)": "会话起始历史（{{count}} 条消息）",
+    "Topic preview": "主题预览",
+    "Inferred link": "推断关联",
+    "Linked by a session ID sent by the client.": "由客户端发送的会话 ID 关联。",
+    "Linked by explicit Responses previous_response_id.": "由 Responses 显式 previous_response_id 关联。",
+    "Inferred by matching the user-message prefix chain.": "通过用户消息前缀链匹配推断关联。",
+    "Request side unrecoverable; only assistant text kept.": "请求侧不可恢复，仅保留助手文本。",
+    "Date": "日期"
   }
 }

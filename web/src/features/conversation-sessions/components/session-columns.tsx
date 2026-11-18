@@ -24,59 +24,78 @@ import { useTranslation } from 'react-i18next'
 import { TruncatedCell } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { toIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatTimestampRelative } from '@/lib/format'
 
 import type { ConversationSession } from '../api'
 
 const SOURCE_LABEL: Record<string, string> = {
   client: 'Client identifier',
   responses: 'Responses link',
-  prefix: 'Prefix chain',
+  prefix: 'Inferred link',
   residual: 'Unattributed fragments',
 }
 
+const SOURCE_TOOLTIP: Record<string, string> = {
+  client: 'Linked by a session ID sent by the client.',
+  responses: 'Linked by explicit Responses previous_response_id.',
+  prefix: 'Inferred by matching the user-message prefix chain.',
+  residual: 'Request side unrecoverable; only assistant text kept.',
+}
+
 export function useSessionColumns(): ColumnDef<ConversationSession>[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage)
   return useMemo(() => {
     const columns: ColumnDef<ConversationSession>[] = [
       {
         accessorKey: 'updated_at',
         header: t('Updated'),
-        size: 180,
+        size: 150,
         cell: ({ row }) => (
-          <span className='font-mono tabular-nums'>
-            {dayjs.unix(row.original.updated_at).format('YYYY-MM-DD HH:mm:ss')}
+          <span
+            className='font-mono tabular-nums'
+            title={dayjs.unix(row.original.updated_at).format('YYYY-MM-DD HH:mm:ss')}
+          >
+            {formatTimestampRelative(row.original.updated_at, 'seconds', locale)}
           </span>
         ),
         meta: { label: t('Updated'), mobileTitle: true },
       },
       {
-        accessorKey: 'user_id',
+        accessorKey: 'username',
         header: t('User'),
-        size: 80,
+        size: 140,
         cell: ({ row }) => (
-          <span className='font-mono'>#{row.original.user_id}</span>
+          <div className='flex min-w-0 flex-col'>
+            <span className='truncate font-medium'>
+              {row.original.username || `#${row.original.user_id}`}
+            </span>
+            <span className='text-muted-foreground truncate text-xs'>
+              {row.original.token_name || '—'}
+            </span>
+          </div>
         ),
         meta: { label: t('User') },
       },
       {
-        accessorKey: 'token_name',
-        header: t('API Keys'),
-        size: 120,
+        accessorKey: 'preview',
+        header: t('Topic preview'),
+        size: 280,
         cell: ({ row }) => (
-          <TruncatedCell className='max-w-32'>
-            {row.original.token_name || '—'}
+          <TruncatedCell className='max-w-72'>
+            {row.original.preview || '—'}
           </TruncatedCell>
         ),
-        meta: { label: t('API Keys') },
+        meta: { label: t('Topic preview') },
       },
       {
         accessorKey: 'last_model',
         header: t('Models'),
-        size: 160,
+        size: 140,
         cell: ({ row }) => (
-          <TruncatedCell className='max-w-40'>
+          <TruncatedCell className='max-w-36'>
             {row.original.last_model || row.original.model || '—'}
           </TruncatedCell>
         ),
@@ -85,10 +104,11 @@ export function useSessionColumns(): ColumnDef<ConversationSession>[] {
       {
         accessorKey: 'source',
         header: t('Linkage'),
-        size: 140,
+        size: 120,
         cell: ({ row }) => (
           <Badge
             variant={row.original.source === 'residual' ? 'warning' : 'secondary'}
+            title={t(SOURCE_TOOLTIP[row.original.source] ?? '')}
           >
             {t(SOURCE_LABEL[row.original.source] ?? row.original.source)}
           </Badge>
@@ -130,5 +150,5 @@ export function useSessionColumns(): ColumnDef<ConversationSession>[] {
       },
     ]
     return columns
-  }, [t])
+  }, [t, locale])
 }

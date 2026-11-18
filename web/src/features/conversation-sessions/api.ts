@@ -41,6 +41,8 @@ export interface ConversationSession {
   user_message_count: number
   request_count: number
   last_outcome: string
+  username?: string
+  preview?: string
 }
 
 export interface ConversationMessage {

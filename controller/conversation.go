@@ -70,7 +70,33 @@ func GetConversationSessions(c *gin.Context) {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"items": sessions, "total": total, "page": page.Page, "page_size": page.PageSize})
+	userIds := make([]int, 0, len(sessions))
+	sessionIds := make([]int64, 0, len(sessions))
+	seenUser := make(map[int]bool)
+	for _, session := range sessions {
+		if !seenUser[session.UserId] {
+			seenUser[session.UserId] = true
+			userIds = append(userIds, session.UserId)
+		}
+		sessionIds = append(sessionIds, session.Id)
+	}
+	usernames := model.ConversationUsernames(userIds)
+	firstText := model.ConversationSessionFirstUserText(sessionIds)
+	items := make([]conversationSessionListItem, 0, len(sessions))
+	for _, session := range sessions {
+		items = append(items, conversationSessionListItem{
+			ConversationSession: session,
+			Username:            usernames[session.UserId],
+			Preview:             model.ConversationRequestPreview(firstText[session.Id]),
+		})
+	}
+	common.ApiSuccess(c, gin.H{"items": items, "total": total, "page": page.Page, "page_size": page.PageSize})
+}
+
+type conversationSessionListItem struct {
+	model.ConversationSession
+	Username string `json:"username"`
+	Preview  string `json:"preview"`
 }
 
 func GetConversationSessionDetail(c *gin.Context) {

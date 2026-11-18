@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -447,4 +448,57 @@ func CleanupConversationSessions(cutoff int64) error {
 		return err
 	}
 	return DB.Where("updated_at < ?", cutoff).Delete(&ConversationSession{}).Error
+}
+
+// ConversationRequestPreview extracts the human request from an IDE-wrapped
+// user message (file-mention preamble + "## My request:") and truncates it for
+// session list previews.
+func ConversationRequestPreview(text string) string {
+	if idx := strings.Index(text, "## My request:"); idx >= 0 {
+		text = text[idx+len("## My request:"):]
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if utf8.RuneCountInString(text) > 80 {
+		return string([]rune(text)[:80]) + "…"
+	}
+	return text
+}
+
+// ConversationSessionFirstUserText returns the first user text message content
+// per session id, used to build list previews.
+func ConversationSessionFirstUserText(ids []int64) map[int64]string {
+	result := make(map[int64]string)
+	if len(ids) == 0 {
+		return result
+	}
+	sub := DB.Model(&ConversationMessage{}).Select("min(id)").
+		Where("session_id IN ? AND role = ? AND kind = ?", ids, "user", "text").
+		Group("session_id")
+	var rows []ConversationMessage
+	if err := DB.Where("id IN (?)", sub).Find(&rows).Error; err != nil {
+		return result
+	}
+	for _, row := range rows {
+		result[row.SessionId] = row.Content
+	}
+	return result
+}
+
+// ConversationUsernames maps user ids to usernames for session list display.
+func ConversationUsernames(ids []int) map[int]string {
+	result := make(map[int]string)
+	if len(ids) == 0 {
+		return result
+	}
+	var users []User
+	if err := DB.Select("id", "username").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return result
+	}
+	for _, user := range users {
+		result[user.Id] = user.Username
+	}
+	return result
 }

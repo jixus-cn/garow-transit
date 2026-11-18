@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft } from 'lucide-react'
-import { useMemo } from 'react'
+import { ArrowLeft, History } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -28,18 +28,27 @@ import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Separator } from '@/components/ui/separator'
 import dayjs from '@/lib/dayjs'
 import { formatNumber } from '@/lib/format'
 
-import { getConversationSessionDetail, type SessionDetail } from '../api'
-import { buildTimeline, summarizeIntegrity } from '../lib/session-view'
+import {
+  getConversationSessionDetail,
+  type ConversationMessage,
+  type SessionDetail,
+} from '../api'
+import { buildReaderView, summarizeIntegrity } from '../lib/session-view'
 import { MessageBubble, ToolDivider } from './message-bubble'
 
 const SOURCE_LABEL: Record<string, string> = {
   client: 'Client identifier',
   responses: 'Responses link',
-  prefix: 'Prefix chain',
+  prefix: 'Inferred link',
   residual: 'Unattributed fragments',
 }
 
@@ -65,8 +74,8 @@ export function SessionReader(props: { sessionId: number }) {
     () => [...pages].reverse().flatMap((page) => page.messages),
     [pages]
   )
-  const timeline = useMemo(
-    () => buildTimeline(messages, ledger),
+  const readerBlocks = useMemo(
+    () => buildReaderView(messages, ledger),
     [messages, ledger]
   )
   const integrity = useMemo(
@@ -168,21 +177,94 @@ export function SessionReader(props: { sessionId: number }) {
           <EmptyState title={t('No recorded text')} />
         ) : (
           <div className='flex flex-col gap-3'>
-            {timeline.map((item) =>
-              item.type === 'tools' ? (
-                <ToolDivider key={item.key} count={item.count} />
-              ) : (
+            {readerBlocks.map((block) => {
+              if (block.type === 'history') {
+                return (
+                  <HistoryFold
+                    key={block.key}
+                    messages={block.messages}
+                    summary={block.summary}
+                  />
+                )
+              }
+              if (block.type === 'separator') {
+                return <TimeSeparator key={block.key} prev={block.prev} at={block.at} />
+              }
+              if (block.type === 'tools') {
+                return <ToolDivider key={block.key} count={block.count} />
+              }
+              return (
                 <MessageBubble
-                  key={item.key}
-                  message={item.message}
-                  final={item.final}
-                  toolCalls={item.toolCalls}
+                  key={block.key}
+                  message={block.message}
+                  final={block.final}
                 />
               )
-            )}
+            })}
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function HistoryFold(props: {
+  messages: ConversationMessage[]
+  summary: string
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className='rounded-lg border border-dashed p-3'
+    >
+      <CollapsibleTrigger
+        render={
+          <Button
+            variant='ghost'
+            size='sm'
+            className='text-muted-foreground h-auto max-w-full justify-start gap-1.5 whitespace-normal'
+          />
+        }
+      >
+        <History className='size-4 shrink-0' aria-hidden='true' />
+        <span>
+          {t('Session opening history ({{count}} messages)', {
+            count: props.messages.length,
+          })}
+          {props.summary ? ` — ${props.summary}` : ''}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        {open && (
+          <div className='flex flex-col gap-3 pt-3'>
+            {props.messages.map((message) => (
+              <MessageBubble key={message.id} message={message} final={false} />
+            ))}
+          </div>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function TimeSeparator(props: { prev: number; at: number }) {
+  const { t } = useTranslation()
+  const prev = dayjs.unix(props.prev)
+  const at = dayjs.unix(props.at)
+  const crossDay = !prev.isSame(at, 'day')
+  const label = crossDay
+    ? at.format('YYYY-MM-DD HH:mm')
+    : at.format('HH:mm')
+  return (
+    <div className='text-muted-foreground/70 flex items-center gap-2 py-1 text-xs'>
+      <Separator className='flex-1' />
+      <span className='shrink-0'>
+        {crossDay ? t('Date') : t('Time')} · {label}
+      </span>
+      <Separator className='flex-1' />
     </div>
   )
 }
