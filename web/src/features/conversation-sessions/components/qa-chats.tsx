@@ -28,13 +28,14 @@ import {
   TruncatedCell,
 } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
+import { Button } from '@/components/ui/button'
 import dayjs from '@/lib/dayjs'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { qaChats, type QAChat, type QAFilter } from '../qa-api'
 
 const empty: QAChat[] = []
-export function QAChats(props: { filter: QAFilter }) {
+export function QAChats(props: { filter: QAFilter; onUnassigned: () => void }) {
   const { t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user?.id)
   const [pagination, setPagination] = useState<PaginationState>({
@@ -105,7 +106,15 @@ export function QAChats(props: { filter: QAFilter }) {
       columns={columns}
       isLoading={q.isPending}
       isFetching={q.isFetching}
-      emptyTitle={t('No records')}
+      emptyTitle={t('No verified chats')}
+      emptyDescription={t(
+        'Prompts without a verified chat are listed separately.'
+      )}
+      emptyAction={
+        <Button variant='outline' onClick={props.onUnassigned}>
+          {t('Unassigned exchanges')}
+        </Button>
+      }
       paginationInFooter
       className='h-auto min-h-0 flex-1'
     />

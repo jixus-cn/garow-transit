@@ -7544,6 +7544,8 @@
     "Unassigned exchanges": "未归属问答",
     "Search prompts and replies": "搜索提示词和最终回复",
     "User prompt and final reply": "用户提示词与模型最终回复",
-    "Load more": "加载更多"
+    "Load more": "加载更多",
+    "No verified chats": "没有可确认归属的聊天",
+    "Prompts without a verified chat are listed separately.": "没有可靠聊天标识的提问，可以在「未归属问答」中查看。"
   }
 }

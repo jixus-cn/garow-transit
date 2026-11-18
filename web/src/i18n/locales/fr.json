@@ -7544,6 +7544,8 @@
     "Unassigned exchanges": "Échanges sans conversation identifiée",
     "Search prompts and replies": "Rechercher dans les demandes et les réponses finales",
     "User prompt and final reply": "Demande et réponse finale",
-    "Load more": "Charger la suite"
+    "Load more": "Charger la suite",
+    "No verified chats": "Aucune conversation identifiée",
+    "Prompts without a verified chat are listed separately.": "Les demandes sans conversation identifiée figurent dans une liste séparée."
   }
 }

@@ -7544,6 +7544,8 @@
     "Unassigned exchanges": "Обмены без привязки к чату",
     "Search prompts and replies": "Поиск по запросам и итоговым ответам",
     "User prompt and final reply": "Запрос и итоговый ответ",
-    "Load more": "Загрузить ещё"
+    "Load more": "Загрузить ещё",
+    "No verified chats": "Нет подтверждённых чатов",
+    "Prompts without a verified chat are listed separately.": "Запросы без подтверждённой привязки к чату показаны отдельно."
   }
 }

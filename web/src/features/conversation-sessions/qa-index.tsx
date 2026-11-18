@@ -124,7 +124,11 @@ export function QAIndex() {
             />
           </div>
           {view === 'chats' ? (
-            <QAChats key={JSON.stringify(filter)} filter={filter} />
+            <QAChats
+              key={JSON.stringify(filter)}
+              filter={filter}
+              onUnassigned={() => setView('unassigned')}
+            />
           ) : (
             <QAReader
               query={view === 'search' ? query : undefined}

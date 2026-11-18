@@ -7544,6 +7544,8 @@
     "Unassigned exchanges": "Lượt trao đổi chưa xác định cuộc trò chuyện",
     "Search prompts and replies": "Tìm lời nhắc và câu trả lời cuối cùng",
     "User prompt and final reply": "Lời nhắc và câu trả lời cuối cùng",
-    "Load more": "Tải thêm"
+    "Load more": "Tải thêm",
+    "No verified chats": "Chưa xác định được cuộc trò chuyện",
+    "Prompts without a verified chat are listed separately.": "Các lời nhắc chưa xác định được cuộc trò chuyện được liệt kê riêng."
   }
 }

@@ -7544,6 +7544,8 @@
     "Unassigned exchanges": "会話が特定できないやり取り",
     "Search prompts and replies": "入力と最終回答を検索",
     "User prompt and final reply": "ユーザーの入力と最終回答",
-    "Load more": "さらに読み込む"
+    "Load more": "さらに読み込む",
+    "No verified chats": "特定できたチャットはありません",
+    "Prompts without a verified chat are listed separately.": "チャットを特定できない質問は別の一覧で確認できます。"
   }
 }

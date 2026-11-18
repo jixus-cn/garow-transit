@@ -7544,6 +7544,8 @@
     "Unassigned exchanges": "Unassigned exchanges",
     "Search prompts and replies": "Search prompts and replies",
     "User prompt and final reply": "User prompt and final reply",
-    "Load more": "Load more"
+    "Load more": "Load more",
+    "No verified chats": "No verified chats",
+    "Prompts without a verified chat are listed separately.": "Prompts without a verified chat are listed separately."
   }
 }
